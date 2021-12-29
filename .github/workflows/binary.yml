@@ -1,0 +1,98 @@
+name: binary
+
+on:
+  push:
+    tags:
+    - '*'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  all:
+    name: All
+
+    strategy:
+      matrix:
+        target:
+        - x86_64-apple-darwin
+        - x86_64-pc-windows-msvc
+        - x86_64-unknown-linux-musl
+        include:
+        - target: x86_64-apple-darwin
+          os: macos-latest
+          native: true
+          target_rustflags: ''
+        - target: x86_64-pc-windows-msvc
+          os: windows-2016
+          native: true
+          target_rustflags: ''
+        - target: x86_64-unknown-linux-musl
+          os: ubuntu-latest
+          native: true
+          target_rustflags: ''
+
+    runs-on: ${{matrix.os}}
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Install Rust Toolchain Components
+      uses: actions-rs/toolchain@v1
+      with:
+        override: true
+        target: ${{ matrix.target }}
+        toolchain: stable
+
+    - name: Install AArch64 Toolchain
+      if: ${{ matrix.target == 'aarch64-unknown-linux-musl' }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install gcc-aarch64-linux-gnu
+    - name: Install ARM7 Toolchain
+      if: ${{ matrix.target == 'armv7-unknown-linux-musleabihf' }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install gcc-arm-linux-gnueabihf
+    - name: Test
+      if: matrix.native
+      run: cargo test --all --target ${{ matrix.target }}
+
+    - name: Ref Type
+      id: ref-type
+      run: cargo run --package ref-type -- --reference ${{ github.ref }}
+
+    - name: Package
+      id: package
+      env:
+        TARGET: ${{ matrix.target }}
+        REF: ${{ github.ref }}
+        OS: ${{ matrix.os }}
+        TARGET_RUSTFLAGS: ${{ matrix.target_rustflags }}
+      run: ./make-release.sh
+      shell: bash
+
+    - name: Publish Archive
+      uses: softprops/action-gh-release@v0.1.5
+      if: ${{ startsWith(github.ref, 'refs/tags/') }}
+      with:
+        draft: false
+        files: ${{ steps.package.outputs.archive }}
+        prerelease: ${{ steps.ref-type.outputs.value != 'release' }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Publish Changelog
+      uses: softprops/action-gh-release@v0.1.5
+      if: >-
+        ${{
+          startsWith(github.ref, 'refs/tags/')
+          && matrix.target == 'x86_64-unknown-linux-musl'
+        }}
+      with:
+        draft: false
+        files: CHANGELOG.md
+        prerelease: ${{ steps.ref-type.outputs.value != 'release' }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
