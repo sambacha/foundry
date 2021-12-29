@@ -17,15 +17,10 @@ jobs:
       matrix:
         target:
         - x86_64-apple-darwin
-        - x86_64-pc-windows-msvc
         - x86_64-unknown-linux-musl
         include:
         - target: x86_64-apple-darwin
           os: macos-latest
-          native: true
-          target_rustflags: ''
-        - target: x86_64-pc-windows-msvc
-          os: windows-2016
           native: true
           target_rustflags: ''
         - target: x86_64-unknown-linux-musl
@@ -44,17 +39,15 @@ jobs:
         override: true
         target: ${{ matrix.target }}
         toolchain: stable
+    
+    - uses: Swatinem/rust-cache@v1
 
     - name: Install AArch64 Toolchain
       if: ${{ matrix.target == 'aarch64-unknown-linux-musl' }}
       run: |
-        sudo apt-get update
-        sudo apt-get install gcc-aarch64-linux-gnu
-    - name: Install ARM7 Toolchain
-      if: ${{ matrix.target == 'armv7-unknown-linux-musleabihf' }}
-      run: |
-        sudo apt-get update
-        sudo apt-get install gcc-arm-linux-gnueabihf
+        sudo apt-get update -qq
+        sudo apt-get install gcc-aarch64-linux-gnu musl-gcc libc6-dev -y --no-install-recommends
+
     - name: Test
       if: matrix.native
       run: cargo test --all --target ${{ matrix.target }}
@@ -70,7 +63,7 @@ jobs:
         REF: ${{ github.ref }}
         OS: ${{ matrix.os }}
         TARGET_RUSTFLAGS: ${{ matrix.target_rustflags }}
-      run: ./make-release.sh
+      run: cargo build --bin forge --release
       shell: bash
 
     - name: Publish Archive
