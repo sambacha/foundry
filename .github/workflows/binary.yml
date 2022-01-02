@@ -2,16 +2,13 @@ name: binary
 
 on:
   push:
-    tags:
-    - '*'
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  all:
-    name: All
+  pipeline:
 
     strategy:
       matrix:
