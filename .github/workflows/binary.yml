@@ -2,31 +2,24 @@ name: binary
 
 on:
   push:
-    tags:
-    - '*'
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  all:
-    name: All
+  pipeline:
 
     strategy:
       matrix:
         target:
-        - x86_64-apple-darwin
         - x86_64-unknown-linux-musl
         include:
-        - target: x86_64-apple-darwin
-          os: macos-latest
-          native: true
-          target_rustflags: ''
         - target: x86_64-unknown-linux-musl
           os: ubuntu-latest
           native: true
           target_rustflags: ''
+          runs-on: ubuntu-latest
 
     runs-on: ${{matrix.os}}
 
@@ -46,7 +39,7 @@ jobs:
 #      if: ${{ matrix.target == 'aarch64-unknown-linux-musl' }}
       run: |
         sudo apt-get update -qq
-        sudo apt-get install gcc-aarch64-linux-gnu musl-gcc libc6-dev -y --no-install-recommends
+        sudo apt-get install gcc-aarch64-linux-gnu musl-tools libc6-dev -y --no-install-recommends
 
     - name: Alpine Build
       run: cargo build --release --bins --target=x86_64-unknown-linux-musl --target-dir=x86_64-unknown-linux-musl
