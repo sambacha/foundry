@@ -43,14 +43,13 @@ jobs:
     - uses: Swatinem/rust-cache@v1
 
     - name: Install AArch64 Toolchain
-      if: ${{ matrix.target == 'aarch64-unknown-linux-musl' }}
+#      if: ${{ matrix.target == 'aarch64-unknown-linux-musl' }}
       run: |
         sudo apt-get update -qq
         sudo apt-get install gcc-aarch64-linux-gnu musl-gcc libc6-dev -y --no-install-recommends
 
-    - name: Test
-      if: matrix.native
-      run: cargo test --all --target ${{ matrix.target }}
+    - name: Alpine Build
+      run: cargo build --release --bins --target=x86_64-unknown-linux-musl --target-dir=x86_64-unknown-linux-musl
 
     - name: Ref Type
       id: ref-type
