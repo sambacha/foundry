@@ -1,5 +1,4 @@
 use ethers::{
-    abi::Token,
     providers::Provider,
     solc::{artifacts::Contract, EvmVersion},
 };
@@ -129,16 +128,6 @@ fn find_fave_or_alt_path(root: impl AsRef<Path>, fave: &str, alt: &str) -> PathB
     p
 }
 
-// need some special handling to print the types nicely
-#[allow(dead_code)]
-pub fn format_tokens(tokens: &[Token]) -> impl Iterator<Item = String> + '_ {
-    tokens.iter().map(|token| match token {
-        Token::Address(inner) => format!("{:?}", inner),
-        Token::Uint(inner) => format!("{}", inner),
-        other => other.to_string(),
-    })
-}
-
 #[cfg(feature = "sputnik-evm")]
 pub fn sputnik_cfg(evm: EvmVersion) -> Config {
     match evm {
@@ -210,4 +199,17 @@ pub fn evmodin_cfg(evm: EvmVersion) -> Revision {
         EvmVersion::London => Revision::London,
         _ => panic!("Unsupported EVM version"),
     }
+}
+
+/// Securely reads a secret from stdin, or proceeds to return a fallback value
+/// which was provided in cleartext via CLI or env var
+#[allow(dead_code)]
+pub fn read_secret(secret: bool, unsafe_secret: Option<String>) -> eyre::Result<String> {
+    Ok(if secret {
+        println!("Insert secret:");
+        rpassword::read_password()?
+    } else {
+        // guaranteed to be Some(..)
+        unsafe_secret.unwrap()
+    })
 }
