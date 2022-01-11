@@ -57,3 +57,24 @@
 - [ ] `sign`
 - [x] `storage`
 - [x] `tx`
+
+## `cast wallet `
+
+```sh
+Set of wallet management utilities
+
+USAGE:
+    cast wallet <SUBCOMMAND>
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+SUBCOMMANDS:
+    address    Convert a private key to an address
+    help       Prints this message or the help of the given subcommand(s)
+    new        Create and output a new random keypair
+    sign       Sign the message with provided private key
+    vanity     Generate a vanity address
+    verify     Verify the signature on the message
+``` 
