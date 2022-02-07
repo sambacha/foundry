@@ -7,8 +7,30 @@ on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
+  
+  pull_request_target:
+    branches:
+    - release
+    - 'v*.*.*'
+
+# ensure permissions are explicitly defined
+# by configuring one we disable the remaining permissions
+# see: https://docs.github.com/en/actions/learn-github-actions/workflow-syntax-for-github-actions#jobsjob_idpermissions
+# permissions:
+#  contents: read
+
+# ensure multiple CI processes are not running analysis on contracts
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request_target' && github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 
 env:
+  CI: true
+  COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+  PULL_NUMBER: ${{ github.event.pull_request.number }}
+  RUN_ID: ${{ github.run_id }}
+  FORCE_COLOR: 2
   IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
 jobs:
