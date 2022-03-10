@@ -293,7 +293,7 @@ where
                                 }
                             }
                         }
-                        continue
+                        continue;
                     }
                 }
                 ProviderRequest::Storage(fut) => {
@@ -325,7 +325,7 @@ where
                                 let _ = l.send(value);
                             })
                         }
-                        continue
+                        continue;
                     }
                 }
             }
@@ -431,9 +431,9 @@ impl Backend for SharedBackend {
         self.inner.vicinity.origin
     }
     fn block_hash(&self, number: U256) -> H256 {
-        if number >= self.inner.vicinity.block_number ||
-            self.inner.vicinity.block_number - number - U256::one() >=
-                U256::from(self.inner.vicinity.block_hashes.len())
+        if number >= self.inner.vicinity.block_number
+            || self.inner.vicinity.block_number - number - U256::one()
+                >= U256::from(self.inner.vicinity.block_hashes.len())
         {
             H256::default()
         } else {

@@ -46,7 +46,7 @@ impl Cmd for FmtArgs {
                 std::env::current_dir().expect("failed to get current directory")
             });
             if !root.is_dir() {
-                return Err(eyre::eyre!("Root path should be a directory"))
+                return Err(eyre::eyre!("Root path should be a directory"));
             }
 
             ProjectPathsConfig::find_source_dir(&root)

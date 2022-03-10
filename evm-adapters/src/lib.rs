@@ -138,8 +138,8 @@ pub trait Evm<State> {
     ) -> Result<(Bytes, Self::ReturnReason, u64, Vec<String>)> {
         let calldata = encode_function_data(func, args)?;
         #[allow(deprecated)]
-        let is_static = func.constant.unwrap_or_default() ||
-            matches!(
+        let is_static = func.constant.unwrap_or_default()
+            || matches!(
                 func.state_mutability,
                 ethers::abi::StateMutability::View | ethers::abi::StateMutability::Pure
             );

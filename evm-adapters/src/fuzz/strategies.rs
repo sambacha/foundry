@@ -50,7 +50,7 @@ impl ValueTree for UintValueTree {
 
     fn simplify(&mut self) -> bool {
         if self.fixed || (self.hi <= self.lo) {
-            return false
+            return false;
         }
 
         self.hi = self.curr;
@@ -59,7 +59,7 @@ impl ValueTree for UintValueTree {
 
     fn complicate(&mut self) -> bool {
         if self.fixed || (self.hi <= self.lo) {
-            return false
+            return false;
         }
 
         self.lo = self.curr + 1;
@@ -121,7 +121,7 @@ impl UintStrategy {
     fn generate_fixtures_tree(&self, runner: &mut TestRunner) -> NewTree<Self> {
         // generate edge cases if there's no fixtures
         if self.fixtures.is_empty() {
-            return self.generate_edge_tree(runner)
+            return self.generate_edge_tree(runner);
         }
         let idx = runner.rng().gen_range(0..self.fixtures.len());
 

@@ -681,18 +681,18 @@ impl Ui for Tui {
                     let event = event::read().unwrap();
                     if let Event::Key(key) = event {
                         if tx.send(Interrupt::KeyPressed(key)).is_err() {
-                            return
+                            return;
                         }
                     } else if let Event::Mouse(mouse) = event {
                         if tx.send(Interrupt::MouseEvent(mouse)).is_err() {
-                            return
+                            return;
                         }
                     }
                 }
                 // force update if time has passed
                 if last_tick.elapsed() > tick_rate {
                     if tx.send(Interrupt::IntervalElapsed).is_err() {
-                        return
+                        return;
                     }
                     last_tick = Instant::now();
                 }
@@ -728,7 +728,7 @@ impl Ui for Tui {
                             LeaveAlternateScreen,
                             DisableMouseCapture
                         )?;
-                        return Ok(TUIExitReason::CharExit)
+                        return Ok(TUIExitReason::CharExit);
                     }
                     // Move down
                     KeyCode::Char('j') | KeyCode::Down => {
@@ -821,8 +821,8 @@ impl Ui for Tui {
                                 .find_map(|(i, op)| {
                                     if i > 0 {
                                         match (
-                                            prev_ops[i - 1].contains("JUMP") &&
-                                                prev_ops[i - 1] != "JUMPDEST",
+                                            prev_ops[i - 1].contains("JUMP")
+                                                && prev_ops[i - 1] != "JUMPDEST",
                                             &**op,
                                         ) {
                                             (true, "JUMPDEST") => Some(i - 1),

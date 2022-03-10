@@ -94,7 +94,7 @@ impl<'a, S, E: Evm<S>> FuzzedExecutor<'a, E, S> {
                     let _ = return_reason.borrow_mut().insert(reason);
                     let err = "ASSUME: Too many rejects";
                     let _ = revert_reason.borrow_mut().insert(err.to_string());
-                    return Err(TestCaseError::Reject(err.into()))
+                    return Err(TestCaseError::Reject(err.into()));
                 }
 
                 // We must check success before resetting the state, otherwise resetting the state
@@ -199,7 +199,7 @@ impl FuzzedCases {
     /// Returns the average gas use of all test cases
     pub fn mean_gas(&self) -> u64 {
         if self.cases.is_empty() {
-            return 0
+            return 0;
         }
 
         (self.cases.iter().map(|c| c.gas as u128).sum::<u128>() / self.cases.len() as u128) as u64

@@ -300,10 +300,10 @@ pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
                         let actual_err = &err_data[64..64 + len];
                         if let Ok(decoded) = decode_revert(actual_err, maybe_abi) {
                             // check if its a builtin
-                            return Ok(decoded)
+                            return Ok(decoded);
                         } else if let Ok(as_str) = String::from_utf8(actual_err.to_vec()) {
                             // check if its a true string
-                            return Ok(as_str)
+                            return Ok(as_str);
                         }
                     }
                 }
@@ -323,7 +323,7 @@ pub fn decode_revert(error: &[u8], maybe_abi: Option<&Abi>) -> Result<String> {
                                         .map(format_token)
                                         .collect::<Vec<String>>()
                                         .join(", ");
-                                    return Ok(format!("{}({})", abi_error.name, inputs))
+                                    return Ok(format!("{}({})", abi_error.name, inputs));
                                 }
                             }
                         }
@@ -394,7 +394,7 @@ pub async fn get_func_etherscan(
     for func in funcs {
         let res = encode_args(func, args);
         if res.is_ok() {
-            return Ok(func.clone())
+            return Ok(func.clone());
         }
     }
 
@@ -447,7 +447,7 @@ pub async fn fourbyte(selector: &str) -> Result<Vec<(String, i32)>> {
 
     let selector = &selector.strip_prefix("0x").unwrap_or(selector);
     if selector.len() < 8 {
-        return Err(eyre::eyre!("Invalid selector"))
+        return Err(eyre::eyre!("Invalid selector"));
     }
     let selector = &selector[..8];
 
@@ -530,7 +530,7 @@ pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
 
     let topic = &topic.strip_prefix("0x").unwrap_or(topic);
     if topic.len() < 64 {
-        return Err(eyre::eyre!("Invalid topic"))
+        return Err(eyre::eyre!("Invalid topic"));
     }
     let topic = &topic[..8];
 
@@ -549,7 +549,7 @@ pub async fn fourbyte_event(topic: &str) -> Result<Vec<(String, i32)>> {
 /// Pretty print calldata and if available, fetch possible function signatures
 ///
 /// ```no_run
-/// 
+///
 /// use foundry_utils::pretty_calldata;
 ///
 /// # async fn foo() -> eyre::Result<()> {
@@ -706,11 +706,11 @@ fn format_param(param: &Param, structs: &mut HashSet<String>) -> String {
     // add `memory` if required (not needed for events, only for functions)
     let is_memory = matches!(
         param.kind,
-        ParamType::Array(_) |
-            ParamType::Bytes |
-            ParamType::String |
-            ParamType::FixedArray(_, _) |
-            ParamType::Tuple(_),
+        ParamType::Array(_)
+            | ParamType::Bytes
+            | ParamType::String
+            | ParamType::FixedArray(_, _)
+            | ParamType::Tuple(_),
     );
     let kind = if is_memory { format!("{} memory", kind) } else { kind };
 
@@ -965,7 +965,7 @@ pub fn link<T, U>(
                 BytecodeObject::Bytecode(ref bytes) => {
                     if bytes.as_ref().is_empty() {
                         // abstract, skip
-                        continue
+                        continue;
                     }
                 }
             }

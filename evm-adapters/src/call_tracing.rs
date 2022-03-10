@@ -258,11 +258,10 @@ impl CallTraceArena {
 
         // we have to clone the name and abi because identified_contracts is later borrowed
         // immutably
-        let res = if let Some((name, abi)) = exec_info.identified_contracts.get(&trace.addr) {
-            Some((name.clone(), abi.clone()))
-        } else {
-            None
-        };
+        let res = exec_info
+            .identified_contracts
+            .get(&trace.addr)
+            .map(|(name, abi)| (name.clone(), abi.clone()));
         if res.is_none() {
             // get the code to compare
             let code = if trace.created { trace.output.clone() } else { evm.code(trace.addr) };
@@ -419,7 +418,7 @@ impl CallTraceNode {
                     Colour::Cyan.paint(event.name.clone()),
                     strings
                 ));
-                return
+                return;
             }
         }
 
@@ -547,20 +546,20 @@ impl CallTrace {
 
                 if !self.output.is_empty() && self.success {
                     if let Ok(tokens) = func.decode_output(&self.output[..]) {
-                        return Output::Token(tokens)
+                        return Output::Token(tokens);
                     } else {
-                        return Output::Raw(self.output[..].to_vec())
+                        return Output::Raw(self.output[..].to_vec());
                     }
                 } else if !self.output.is_empty() && !self.success {
                     if let Ok(decoded_error) =
                         foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
                     {
-                        return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
+                        return Output::Token(vec![ethers::abi::Token::String(decoded_error)]);
                     } else {
-                        return Output::Raw(self.output.clone())
+                        return Output::Raw(self.output.clone());
                     }
                 } else {
-                    return Output::Raw(vec![])
+                    return Output::Raw(vec![]);
                 }
             }
         } else {
@@ -585,10 +584,10 @@ impl CallTrace {
                 if let Ok(decoded_error) =
                     foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
                 {
-                    return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
+                    return Output::Token(vec![ethers::abi::Token::String(decoded_error)]);
                 }
             }
-            return Output::Raw(self.output[..].to_vec())
+            return Output::Raw(self.output[..].to_vec());
         }
 
         // We couldn't decode the function call, so print it as an abstract call
@@ -618,7 +617,7 @@ impl CallTrace {
             if let Ok(decoded_error) =
                 foundry_utils::decode_revert(&self.output[..], Some(exec_info.errors))
             {
-                return Output::Token(vec![ethers::abi::Token::String(decoded_error)])
+                return Output::Token(vec![ethers::abi::Token::String(decoded_error)]);
             }
         }
         Output::Raw(self.output[..].to_vec())
@@ -632,7 +631,7 @@ fn diff_score(bytecode1: &[u8], bytecode2: &[u8]) -> f64 {
     let b1 = &bytecode1[..cutoff_len];
     let b2 = &bytecode2[..cutoff_len];
     if cutoff_len == 0 {
-        return 1.0
+        return 1.0;
     }
 
     let mut diff_chars = 0;

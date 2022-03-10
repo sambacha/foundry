@@ -90,13 +90,13 @@ impl MultiContractRunnerBuilder {
                     if let Some(b) = contract.bytecode.expect("No bytecode").object.into_bytes() {
                         b
                     } else {
-                        return Ok(())
+                        return Ok(());
                     };
 
                 let abi = contract.abi.expect("We should have an abi by now");
                 // if it's a test, add it to deployable contracts
-                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true) &&
-                    abi.functions().any(|func| func.name.starts_with("test"))
+                if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
+                    && abi.functions().any(|func| func.name.starts_with("test"))
                 {
                     deployable_contracts
                         .insert(fname.clone(), (abi.clone(), bytecode, dependencies.to_vec()));
@@ -196,8 +196,10 @@ impl MultiContractRunner {
 
         let results = contracts
             .par_iter()
-            .filter(|(name, _)| filter.matches_path(source_paths.get(*name).unwrap()))
-            .filter(|(name, _)| filter.matches_contract(name))
+            .filter(|(name, _)| {
+                filter.matches_path(source_paths.get(*name).unwrap())
+                    && filter.matches_contract(name)
+            })
             .map(|(name, (abi, deploy_code, libs))| {
                 // unavoidable duplication here?
                 let result = match backend {

@@ -45,12 +45,12 @@ pub fn find_project_root_path() -> std::io::Result<PathBuf> {
     while cwd.starts_with(&boundary) {
         let file_path = cwd.join(Config::FILE_NAME);
         if file_path.is_file() {
-            return Ok(cwd.to_path_buf())
+            return Ok(cwd.to_path_buf());
         }
         if let Some(parent) = cwd.parent() {
             cwd = parent;
         } else {
-            break
+            break;
         }
     }
     // no foundry.toml found
@@ -114,7 +114,7 @@ pub fn parse_libraries(
             .next()
             .ok_or_else(|| SolcError::msg(format!("failed to parse invalid library: {}", lib)))?;
         if items.next().is_some() {
-            return Err(SolcError::msg(format!("failed to parse invalid library: {}", lib)))
+            return Err(SolcError::msg(format!("failed to parse invalid library: {}", lib)));
         }
         libraries
             .entry(file.to_string())

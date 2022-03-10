@@ -53,15 +53,15 @@ impl LineOfCode for Statement {
 impl LineOfCode for AssemblyStatement {
     fn loc(&self) -> Loc {
         match self {
-            AssemblyStatement::Assign(loc, _, _) |
-            AssemblyStatement::If(loc, _, _) |
-            AssemblyStatement::For(loc, _, _, _, _) |
-            AssemblyStatement::Switch(loc, _, _, _) |
-            AssemblyStatement::Leave(loc) |
-            AssemblyStatement::Break(loc) |
-            AssemblyStatement::VariableDeclaration(loc, _, _) |
-            AssemblyStatement::Block(loc, _) |
-            AssemblyStatement::Continue(loc) => *loc,
+            AssemblyStatement::Assign(loc, _, _)
+            | AssemblyStatement::If(loc, _, _)
+            | AssemblyStatement::For(loc, _, _, _, _)
+            | AssemblyStatement::Switch(loc, _, _, _)
+            | AssemblyStatement::Leave(loc)
+            | AssemblyStatement::Break(loc)
+            | AssemblyStatement::VariableDeclaration(loc, _, _)
+            | AssemblyStatement::Block(loc, _)
+            | AssemblyStatement::Continue(loc) => *loc,
             AssemblyStatement::Expression(expr) => expr.loc(),
             AssemblyStatement::FunctionDefinition(f) => f.loc,
             AssemblyStatement::FunctionCall(f) => f.loc,
@@ -72,13 +72,13 @@ impl LineOfCode for AssemblyStatement {
 impl LineOfCode for AssemblyExpression {
     fn loc(&self) -> Loc {
         *match self {
-            AssemblyExpression::BoolLiteral(loc, _, _) |
-            AssemblyExpression::NumberLiteral(loc, _, _) |
-            AssemblyExpression::HexNumberLiteral(loc, _, _) |
-            AssemblyExpression::Assign(loc, _, _) |
-            AssemblyExpression::LetAssign(loc, _, _) |
-            AssemblyExpression::Member(loc, _, _) |
-            AssemblyExpression::Subscript(loc, _, _) => loc,
+            AssemblyExpression::BoolLiteral(loc, _, _)
+            | AssemblyExpression::NumberLiteral(loc, _, _)
+            | AssemblyExpression::HexNumberLiteral(loc, _, _)
+            | AssemblyExpression::Assign(loc, _, _)
+            | AssemblyExpression::LetAssign(loc, _, _)
+            | AssemblyExpression::Member(loc, _, _)
+            | AssemblyExpression::Subscript(loc, _, _) => loc,
             AssemblyExpression::StringLiteral(literal, _) => &literal.loc,
             AssemblyExpression::Variable(ident) => &ident.loc,
             AssemblyExpression::FunctionCall(f) => &f.loc,
