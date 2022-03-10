@@ -70,7 +70,7 @@ impl GasReport {
 
         #[cfg(feature = "sputnik")]
         if trace.addr == *CHEATCODE_ADDRESS || trace.addr == *CONSOLE_ADDRESS {
-            return
+            return;
         }
 
         if let Some((name, abi)) = identified_contracts.get(&trace.addr) {

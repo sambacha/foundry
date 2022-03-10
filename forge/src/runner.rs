@@ -240,8 +240,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
             .contract
             .functions()
             .into_iter()
-            .filter(|func| func.name.starts_with("test"))
-            .filter(|func| filter.matches_test(&func.name))
+            .filter(|func| func.name.starts_with("test") && filter.matches_test(&func.name))
             .collect::<Vec<_>>();
 
         // run all unit tests
@@ -341,7 +340,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                             None
                         },
                         labeled_addresses: evm.state().labels.clone(),
-                    })
+                    });
                 }
             };
             logs.extend_from_slice(&setup_logs);
@@ -368,7 +367,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                 }
                 err => {
                     tracing::error!(?err);
-                    return Err(err.into())
+                    return Err(err.into());
                 }
             },
         };
@@ -452,7 +451,7 @@ impl<'a, B: Backend + Clone + Send + Sync> ContractRunner<'a, B> {
                             None
                         },
                         labeled_addresses: evm.state().labels.clone(),
-                    })
+                    });
                 }
             }
         }

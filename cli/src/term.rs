@@ -65,7 +65,7 @@ impl Spinner {
 
     pub fn tick(&mut self) {
         if self.no_progress {
-            return
+            return;
         }
         print!("{}", self.tick_bytes());
         io::stdout().flush().unwrap();
@@ -87,7 +87,7 @@ impl Spinner {
 
     pub fn done(&self) {
         if self.no_progress {
-            return
+            return;
         }
         println!("\r\x1b[2K\x1b[1m[\x1b[32m+\x1b[0;1m]\x1b[0m {}", self.message);
         io::stdout().flush().unwrap();
@@ -104,7 +104,7 @@ impl Spinner {
 
     pub fn clear_line(&self) {
         if self.no_progress {
-            return
+            return;
         }
         print!("\r\x33[2K\r");
         io::stdout().flush().unwrap();
@@ -112,7 +112,7 @@ impl Spinner {
 
     pub fn clear(&self) {
         if self.no_progress {
-            return
+            return;
         }
         print!("\r\x1b[2K");
         io::stdout().flush().unwrap();
@@ -125,7 +125,7 @@ impl Spinner {
 
     pub fn error(&mut self, line: &str) {
         if self.no_progress {
-            return
+            return;
         }
         println!("\r\x1b[2K\x1b[1m[\x1b[31m-\x1b[0;1m]\x1b[0m {}", line);
     }
@@ -162,7 +162,7 @@ impl SpinnerReporter {
                                 // end with a newline
                                 println!();
                                 let _ = ack.send(());
-                                break
+                                break;
                             }
                         }
                     }

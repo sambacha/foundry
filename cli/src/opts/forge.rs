@@ -175,7 +175,7 @@ impl FromStr for ContractInfo {
         if name.ends_with(".sol") || name.contains('/') {
             return Err(eyre::eyre!(
                 "contract source info format must be `<path>:<contractname>` or `<contractname>`"
-            ))
+            ));
         }
 
         Ok(Self { path, name })

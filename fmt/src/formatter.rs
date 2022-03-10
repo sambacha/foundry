@@ -149,7 +149,7 @@ impl<'a, W: Write> Formatter<'a, W> {
 
     /// Returns number of blank lines between two parts of source code
     fn blank_lines<T: LineOfCode>(&self, a: &mut T, b: &&mut T) -> usize {
-        return self.source[a.loc().end()..b.loc().start()].matches('\n').count()
+        return self.source[a.loc().end()..b.loc().start()].matches('\n').count();
     }
 }
 
@@ -214,9 +214,9 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
             writeln!(self)?;
 
             if let Some(next_unit) = source_unit_parts_iter.peek() {
-                if (is_declaration(unit) || is_declaration(next_unit)) ||
-                    (is_pragma(unit) || is_pragma(next_unit)) ||
-                    (is_import(unit) &&
+                if (is_declaration(unit) || is_declaration(next_unit))
+                    || (is_pragma(unit) || is_pragma(next_unit))
+                    || (is_import(unit) &&
                         is_import(next_unit) &&
                         // If source has zero blank lines between imports, leave it as is. If one
                         //  or more, separate imports with one blank line.
@@ -484,14 +484,14 @@ mod tests {
                         let parts = line.splitn(2, ':').collect::<Vec<_>>();
 
                         if parts.len() != 2 {
-                            return None
+                            return None;
                         }
 
                         let key = parts[0];
                         let value = parts[1].trim();
 
                         if key == "parsers" && value != r#"["solidity-parse"]"# {
-                            return None
+                            return None;
                         }
 
                         Some((key, value))

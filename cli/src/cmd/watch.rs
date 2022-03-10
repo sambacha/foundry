@@ -85,11 +85,11 @@ pub async fn watch_test(args: TestArgs) -> eyre::Result<()> {
     let wx = Watchexec::new(init, runtime.clone())?;
 
     // marker to check whether to override the command
-    let no_reconfigure = args.filter().pattern.is_some() ||
-        args.filter().test_pattern.is_some() ||
-        args.filter().path_pattern.is_some() ||
-        args.filter().contract_pattern.is_some() ||
-        args.build_args().watch.run_all;
+    let no_reconfigure = args.filter().pattern.is_some()
+        || args.filter().test_pattern.is_some()
+        || args.filter().path_pattern.is_some()
+        || args.filter().contract_pattern.is_some()
+        || args.build_args().watch.run_all;
 
     on_action(
         args.build_args().watch.clone(),
@@ -124,7 +124,7 @@ fn on_test(action: OnActionState<WatchTestState>) {
 
     if no_reconfigure {
         // nothing to reconfigure
-        return
+        return;
     }
 
     let mut cmd = cmd.clone();
@@ -140,7 +140,7 @@ fn on_test(action: OnActionState<WatchTestState>) {
 
     if changed_sol_test_files.is_empty() {
         if last_test_files.is_empty() {
-            return
+            return;
         }
         // reuse the old test files if a non test file was changed
         changed_sol_test_files = last_test_files;
@@ -233,7 +233,7 @@ fn on_action<F, T>(
 
         if signals.contains(&MainSignal::Terminate) || signals.contains(&MainSignal::Interrupt) {
             action.outcome(Outcome::both(Outcome::Stop, Outcome::Exit));
-            return fut
+            return fut;
         }
 
         if !has_paths {
@@ -244,7 +244,7 @@ fn on_action<F, T>(
                 }
 
                 action.outcome(out);
-                return fut
+                return fut;
             }
 
             let completion = action.events.iter().flat_map(|e| e.completions()).next();
@@ -268,7 +268,7 @@ fn on_action<F, T>(
                 };
 
                 action.outcome(Outcome::DoNothing);
-                return fut
+                return fut;
             }
         }
 

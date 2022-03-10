@@ -120,7 +120,7 @@ pub async fn run_verify(args: &VerifyArgs) -> eyre::Result<()> {
     if resp.status == "0" {
         if resp.message == "Contract source code already verified" {
             println!("Contract source code already verified.");
-            return Ok(())
+            return Ok(());
         }
 
         eyre::bail!(
@@ -154,7 +154,7 @@ pub async fn run_verify_check(args: &VerifyCheckArgs) -> eyre::Result<()> {
     if resp.status == "0" {
         if resp.result == "Pending in queue" {
             println!("Verification is pending...");
-            return Ok(())
+            return Ok(());
         }
 
         eyre::bail!(
