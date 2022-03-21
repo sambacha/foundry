@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v2
         with:
           fetch-depth: 0
 
@@ -96,7 +96,7 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v2
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
@@ -129,7 +129,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --bins --target ${{ matrix.job.target }}
+          args: --release --bins --locked --target x86_64-unknown-linux-gnu
 
 
       - name: Reduce binariy size
@@ -145,6 +145,22 @@ jobs:
             ./target/${TARGET}/release forge cast
           args: -9
 
+      - run: echo "::set-output name=release::$(printf '%(%Y-%m-%d+)T'; git rev-parse --short=12 HEAD)"
+
+      - uses: 'marvinpinto/action-automatic-releases@latest'
+        env:
+          PLATFORM_NAME: ${{ matrix.job.platform }}
+          TARGET: ${{ matrix.job.target }}
+          ARCH: ${{ matrix.job.arch }}
+        with:
+          repo_token: '${{ secrets.GITHUB_TOKEN }}'
+          automatic_release_tag: 'latest'
+          prerelease: true
+          files: |
+            LICENSE.md
+            ./target/${TARGET}/release forge cast
+        id: 'automatic_releases'
+        
       - name: Archive binaries
         id: artifacts
         env:
