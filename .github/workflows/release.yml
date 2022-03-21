@@ -103,9 +103,7 @@ jobs:
             libcap-dev \
             libc6-dev \
             librust-pkg-config-dev \
-            openssl \
-            && rm -rf /var/lib/apt/lists/* \
-            && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false
+            openssl
 
           printf '%(%Y-%m-%d+)T'; git rev-parse --short=12 HEAD >> $GITHUB_ENV
         shell: bash
