@@ -106,8 +106,6 @@ jobs:
             openssl
         
       - name: Build binaries
-        env:
-          RUSTFLAGS: -C link-args=-s
         uses: actions-rs/cargo@v1
         with:
           command: build
