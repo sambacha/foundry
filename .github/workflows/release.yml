@@ -104,9 +104,6 @@ jobs:
             libc6-dev \
             librust-pkg-config-dev \
             openssl
-
-          printf '%(%Y-%m-%d+)T'; git rev-parse --short=12 HEAD >> $GITHUB_ENV
-        shell: bash
         
       - name: Build binaries
         env:
