@@ -6,7 +6,8 @@ use std::{path::PathBuf, str::FromStr};
 use crate::cmd::forge::{
     bind::BindArgs,
     build::BuildArgs,
-    certora, config,
+    certora, 
+    config,
     create::CreateArgs,
     flatten,
     init::InitArgs,
