@@ -4,3 +4,4 @@ out/
 out.json
 
 fmt/testdata/*
+.vscode
