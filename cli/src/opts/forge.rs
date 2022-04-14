@@ -6,6 +6,7 @@ use std::{path::PathBuf, str::FromStr};
 use crate::cmd::forge::{
     bind::BindArgs,
     build::BuildArgs,
+    certora, 
     config,
     create::CreateArgs,
     flatten,
@@ -135,6 +136,8 @@ pub enum Subcommands {
     Inspect(inspect::InspectArgs),
     #[clap(about = "Display a tree visualization of the project's dependency graph.")]
     Tree(tree::TreeArgs),
+    #[clap(alias = "cer", about = "Test using Certora's formal verification tool")]
+    Certora(certora::CertoraArgs),
 }
 
 // A set of solc compiler settings that can be set via command line arguments, which are intended
