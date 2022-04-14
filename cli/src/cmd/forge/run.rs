@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{forge::build::BuildArgs, Cmd},
+    cmd::{forge::build::CoreBuildArgs, Cmd},
     compile,
     opts::evm::EvmArgs,
     utils,
@@ -46,11 +46,11 @@ pub struct RunArgs {
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
-    #[clap(long, short)]
+    #[clap(long, short, value_name = "CONTRACT_NAME")]
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
-    #[clap(long, short, default_value = "run()")]
+    #[clap(long, short, default_value = "run()", value_name = "SIGNATURE")]
     pub sig: String,
 
     /// Open the script in the debugger.
@@ -58,7 +58,7 @@ pub struct RunArgs {
     pub debug: bool,
 
     #[clap(flatten, next_help_heading = "BUILD OPTIONS")]
-    pub opts: BuildArgs,
+    pub opts: CoreBuildArgs,
 
     #[clap(flatten, next_help_heading = "EVM OPTIONS")]
     pub evm_opts: EvmArgs,
@@ -96,7 +96,20 @@ impl Cmd for RunArgs {
         let CompactContractBytecode { abi, bytecode, .. } = contract;
         let abi = abi.expect("no ABI for contract");
         let bytecode = bytecode.expect("no bytecode for contract").object.into_bytes().unwrap();
-        let needs_setup = abi.functions().any(|func| func.name == "setUp");
+        let setup_fns: Vec<_> =
+            abi.functions().filter(|func| func.name.to_lowercase() == "setup").collect();
+
+        let needs_setup = setup_fns.len() == 1 && setup_fns[0].name == "setUp";
+
+        for setup_fn in setup_fns.iter() {
+            if setup_fn.name != "setUp" {
+                println!(
+                    "{} Found invalid setup function \"{}\" did you mean \"setUp()\"?",
+                    Colour::Yellow.bold().paint("Warning:"),
+                    setup_fn.signature()
+                );
+            }
+        }
 
         let runtime = RuntimeOrHandle::new();
         let env = runtime.block_on(evm_opts.evm_env());
