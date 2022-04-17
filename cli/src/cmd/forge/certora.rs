@@ -107,6 +107,8 @@ fn try_install_certora(sh: &mut Shell, python3: &str, run_args_given: bool) -> R
                 if run_args_given {
                     println!("These directories will be temporarily added to PATH for this run, but must be manually added for future runs.");
                     add_dirs_to_path(dirs)?;
+                } else {
+                    println!("Make sure to add these directories to PATH before attempting to run this script.");
                 }
             }
             Ok(())
