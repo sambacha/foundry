@@ -190,7 +190,7 @@ impl<'a, W: Write> Visitor for Formatter<'a, W> {
         if let Some(remainder) = lines.next() {
             // Call with `self.write_str` and not `write!`, so we can have `\n` at the beginning
             // without triggering an indentation
-            self.write_str(&format!("\n{}", remainder))?;
+            self.write_str(&format!("\n{remainder}"))?;
         }
 
         Ok(())
@@ -681,7 +681,7 @@ mod tests {
                             "explicitTypes" => (), // TODO: set explicit_types in config
                             "parsers" => (),
                             "printWidth" => config.line_length = value.parse().unwrap(),
-                            _ => panic!("Unknown snapshot options key: {}", key),
+                            _ => panic!("Unknown snapshot options key: {key}"),
                         }
 
                         config

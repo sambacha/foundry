@@ -168,7 +168,7 @@ impl fmt::Display for RawOrDecodedLog {
                     writeln!(
                         f,
                         "{:>13}: {}",
-                        if i == 0 { "emit topic 0".to_string() } else { format!("topic {}", i) },
+                        if i == 0 { "emit topic 0".to_string() } else { format!("topic {i}") },
                         Colour::Cyan.paint(format!("0x{}", hex::encode(&topic)))
                     )?;
                 }

@@ -140,7 +140,7 @@ impl Cmd for FmtArgs {
                 if i > 0 {
                     println!();
                 }
-                print!("{}", diff);
+                print!("{diff}");
             }
 
             std::process::exit(1);
