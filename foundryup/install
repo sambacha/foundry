@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
-echo Installing foundryup...
+echo "Installing foundryup..."
 
 FOUNDRY_DIR=${FOUNDRY_DIR-"$HOME/.foundry"}
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
+
+
+# runs with Makefile to generate hash on CI
+# shellcheck disable=SC2034
+SCRIPT_COMMIT_SHA="${LOAD_SCRIPT_COMMIT_SHA}"
 
 BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/master/foundryup/foundryup"
 BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
@@ -39,10 +44,16 @@ esac
 
 # Only add foundryup if it isn't already in PATH.
 if [[ ":$PATH:" != *":${FOUNDRY_BIN_DIR}:"* ]]; then
+    # macOS calls bash_profile on new shells unlike linux, which sources bashrc
+    if [[ "$OSTYPE" =~ ^darwin * ]]; then
+		echo >>"$HOME"/.bash_profile && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >>"$HOME"/.bash_profile
+	fi
     # Add the foundryup directory to the path and ensure the old PATH variables remain.
     echo >> $PROFILE && echo "export PATH=\"\$PATH:$FOUNDRY_BIN_DIR\"" >> $PROFILE
 fi
 
+
+    
 # Warn MacOS users that they may need to manually install libusb via Homebrew:
 if [[ "$OSTYPE" =~ ^darwin && ! -f /usr/local/opt/libusb/lib/libusb-1.0.0.dylib ]]; then
     echo && echo "warning: libusb not found. You may need to install it manually on MacOS via Homebrew (brew install libusb)."
@@ -50,3 +61,4 @@ fi
 
 echo && echo "Detected your preferred shell is ${PREF_SHELL} and added foundryup to PATH. Run 'source ${PROFILE}' or start a new terminal session to use foundryup."
 echo "Then, simply run 'foundryup' to install Foundry."
+echo "Afterwards, run forge completions ${PREF_SHELL} for command completions support!"
