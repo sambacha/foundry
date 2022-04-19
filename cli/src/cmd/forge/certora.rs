@@ -1,43 +1,54 @@
 use crate::cmd::Cmd;
-use clap::Parser;
+use clap::{AppSettings, Parser};
 use color_eyre::eyre::{bail, eyre, Context, Result};
+use ethers::solc::Solc;
+use foundry_config::{Config, SolcReq};
 use regex::Regex;
-use std::{collections::HashSet, env};
+use semver::Version;
+use std::{borrow::Cow, collections::HashSet, env, fs};
+
+//TODO: consider ditching this and just use std::process::Command
 use xshell::{cmd, Shell};
 
-const MIN_MAJOR_PYTHON_VER: u32 = 3;
-const MIN_MINOR_PYTHON_VER: u32 = 8;
+const MIN_PYTHON_VERSION: Version = Version::new(3, 8, 0);
 
 #[derive(Debug, Clone, Parser)]
+#[clap(global_setting = AppSettings::DeriveDisplayOrder)]
 pub struct CertoraArgs {
-    #[clap(help = "Attempt to install the Certora command-line interface", short, long)]
-    install: bool,
     #[clap(
-        help = "Arguments to be passed to certoraRun, see Certora documentation for more info",
-        short,
-        long
+        help = "Arguments to be passed to Certora command-line interface",
+        short = 'a',
+        long = "args"
     )]
-    args: Option<String>,
+    cli_args: Option<String>,
+    #[clap(help = "Attempt to install the Certora command-line interface", short, long)]
+    install_cli: bool,
+    #[clap(
+        help = "Auto-detect required solc version from project, and add it to args",
+        long,
+        requires = "cli-args"
+    )]
+    add_solc_version: bool,
+    #[clap(
+        help = "Attempt to install the auto-detected solc version",
+        long,
+        requires = "add-solc-version"
+    )]
+    install_solc: bool,
 }
 
 fn python3_bin(sh: &mut Shell) -> Option<String> {
-    let re = Regex::new(r"^Python (?P<major_ver>2|3)\.(?P<minor_ver>\d{1,2}).+$")
-        .expect("regex failure");
+    let re =
+        Regex::new(r"^Python (?P<sem_ver>[2|3]\.\d{1,3}\.\d{1,2})\s*$").expect("regex failure");
+    let get_ver_str = |bin: &str| cmd!(sh, "{bin} --version").read().ok();
 
-    for bin_name in ["python3", "python"] {
-        if let Ok(ver_str) = cmd!(sh, "{bin_name} --version").read() {
-            if let Some(captures) = re.captures(&ver_str) {
-                //these unwraps are safe, since we already validated the formatting by matching the regex.
-                let major_ver =
-                    captures.name("major_ver").unwrap().as_str().parse::<u32>().unwrap();
-                let minor_ver =
-                    captures.name("minor_ver").unwrap().as_str().parse::<u32>().unwrap();
+    let bin_names = ["python3", "python"].map(String::from);
 
-                if major_ver > MIN_MAJOR_PYTHON_VER
-                    || (major_ver == MIN_MAJOR_PYTHON_VER && minor_ver >= MIN_MINOR_PYTHON_VER)
-                {
-                    return Some(String::from(bin_name));
-                }
+    for bin_name in bin_names {
+        if let Some(cap) = get_ver_str(&bin_name).as_deref().and_then(|s| re.captures(s)) {
+            let sem_ver = Version::parse(&cap["sem_ver"]).unwrap();
+            if sem_ver >= MIN_PYTHON_VERSION {
+                return Some(bin_name);
             }
         }
     }
@@ -83,7 +94,7 @@ fn dirs_not_in_path(stderr_output: &str) -> HashSet<&str> {
         .collect()
 }
 
-fn try_install_certora(sh: &mut Shell, python3: &str, run_args_given: bool) -> Result<()> {
+fn try_install_certora(sh: &mut Shell, python3: &str, cli_args_given: bool) -> Result<()> {
     match (is_pip3_installed(sh, python3), is_certora_cli_installed(sh, python3)) {
         (true, true) => {
             println!("certora-cli is already installed.");
@@ -104,11 +115,13 @@ fn try_install_certora(sh: &mut Shell, python3: &str, run_args_given: bool) -> R
                     println!("\t{dir}")
                 }
 
-                if run_args_given {
+                if cli_args_given {
                     println!("These directories will be temporarily added to PATH for this run, but must be manually added for future runs.");
                     add_dirs_to_path(dirs)?;
                 } else {
-                    println!("Make sure to add these directories to PATH before attempting to run this script.");
+                    println!(
+                        "For future runs, make sure you manually add these directories to PATH."
+                    );
                 }
             }
             Ok(())
@@ -119,30 +132,102 @@ fn try_install_certora(sh: &mut Shell, python3: &str, run_args_given: bool) -> R
     }
 }
 
+fn args_with_solc_ver_param(mut certora_run_args: String, required_ver: &Version) -> String {
+    let re = Regex::new(r"\s+--solc\s+[^\s]+").expect("regex failed");
+
+    let solc_arg = format!(" --solc {required_ver}");
+
+    match re.replace_all(&certora_run_args, &solc_arg) {
+        Cow::Borrowed(_unchanged) => {
+            certora_run_args.push_str(&solc_arg);
+            certora_run_args
+        }
+        Cow::Owned(modified) => modified,
+    }
+}
+
+fn required_solc_ver_from_config(config: &Config) -> Option<Version> {
+    //if the project has a required version of solc, try to detect which version it uses
+    let solc_req = config.solc.as_ref()?.clone();
+
+    match solc_req {
+        SolcReq::Version(ver) => Some(ver),
+        SolcReq::Local(solc_path) => Solc::new(solc_path).version().ok(),
+    }
+}
+
+fn solc_ver_from_project_config() -> Option<Version> {
+    let project_config = Config::try_from(Config::figment()).ok()?;
+
+    required_solc_ver_from_config(&project_config)
+}
+
+fn solc_ver_from_foundry_toml() -> Option<Version> {
+    let toml_path = Config::find_config_file()?;
+    let toml_data = fs::read_to_string(toml_path).unwrap();
+    let config: Config = toml::from_str(&toml_data).ok()?;
+
+    required_solc_ver_from_config(&config)
+}
+
 impl Cmd for CertoraArgs {
     type Output = ();
 
     fn run(self) -> eyre::Result<Self::Output> {
+        let CertoraArgs { install_cli, cli_args, add_solc_version, install_solc } = self;
+
         let mut sh = Shell::new()?;
 
         let python3 = python3_bin(&mut sh).ok_or_else(|| {
-            let req = format!("Python {MIN_MAJOR_PYTHON_VER}.{MIN_MINOR_PYTHON_VER}");
-            eyre!("certora-cli requires {req} or newer. Install {req} and run this tool again.")
+            eyre!(
+                "certora-cli requires Python {MIN_PYTHON_VERSION} or newer. \
+                  Install Python {MIN_PYTHON_VERSION} and run this tool again."
+            )
         })?;
 
-        if self.install {
-            try_install_certora(&mut sh, &python3, self.args.is_some())?;
+        if install_cli {
+            try_install_certora(&mut sh, &python3, cli_args.is_some())?;
         }
 
-        if let Some(run_arg) = self.args {
-            //no need to check installation if install was passed as arg,
+        if let Some(mut cli_args) = cli_args {
+            //no need to check installation if install_cli was passed as arg,
             //because we already verified it earlier.
-            if !self.install && !is_certora_cli_installed(&mut sh, &python3) {
+            if !install_cli && !is_certora_cli_installed(&mut sh, &python3) {
                 println!("certora-cli not found, attempting to install it automatically...");
                 try_install_certora(&mut sh, &python3, true)?;
             }
 
-            cmd!(sh, "certoraRun {run_arg}").run()?;
+            if add_solc_version {
+                let required_solc_ver = solc_ver_from_project_config()
+                    .or_else(solc_ver_from_foundry_toml)
+                    .or_else(|| {
+                        //as a last-ditch effort, try to detect the most recent solc version.
+
+                        //TODO: I think this is unnecessary because certoraRun already selects the most recent version.
+                        None
+                    });
+
+                if let Some(ver) = required_solc_ver {
+                    println!(
+                        "Project seems to require solc version {ver}. Adding this requirement to cli args."
+                    );
+                    cli_args = args_with_solc_ver_param(cli_args, &ver);
+
+                    if install_solc {
+                        println!("Attempting to install solc version {ver}...");
+                        let ver_string = ver.to_string();
+                        Solc::version_req(&ver_string)
+                            .and_then(|req| Solc::ensure_installed(&req))
+                            .wrap_err("Failure when attempting to install solc version {ver}.")?;
+                    }
+                } else {
+                    println!(
+                        "Unable to detect required solc version. The cli args were not modified."
+                    )
+                }
+            }
+
+            cmd!(sh, "certoraRun {cli_args}").run()?;
         }
 
         Ok(())

@@ -59,6 +59,7 @@ watchexec = "2.0.0-pre.11"
 atty = "0.2.14"
 globset = "0.4.8"
 xshell = "0.2.1"
+toml = "0.5"
 
 [dev-dependencies]
 foundry-utils = { path = "./../utils", features = ["test"] }
