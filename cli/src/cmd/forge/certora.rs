@@ -38,14 +38,14 @@ pub struct CertoraArgs {
 }
 
 fn python3_bin(sh: &mut Shell) -> Option<String> {
-    let re =
-        Regex::new(r"^Python (?P<sem_ver>[2|3]\.\d{1,3}\.\d{1,2})\s*$").expect("regex failure");
-    let get_ver_str = |bin: &str| cmd!(sh, "{bin} --version").read().ok();
-
+    let re = Regex::new(r"^Python (?P<sem_ver>[2|3]\.[0-9]{1,3}\.[0-9]{1,2})\s*$")
+        .expect("regex failure");
     let bin_names = ["python3", "python"].map(String::from);
 
+    let get_ver_str = |bin: &str| cmd!(sh, "{bin} --version").read().ok();
+
     for bin_name in bin_names {
-        if let Some(cap) = get_ver_str(&bin_name).as_deref().and_then(|s| re.captures(s)) {
+        if let Some(cap) = get_ver_str(&bin_name).as_deref().and_then(|ver_str| re.captures(ver_str)) {
             let sem_ver = Version::parse(&cap["sem_ver"]).unwrap();
             if sem_ver >= MIN_PYTHON_VERSION {
                 return Some(bin_name);
@@ -58,7 +58,7 @@ fn python3_bin(sh: &mut Shell) -> Option<String> {
 
 fn is_pip3_installed(sh: &mut Shell, python3: &str) -> bool {
     //expects string of form "pip x.y.z from {path_to_pip} (python 3.x)"
-    let re = Regex::new(r"^pip.+\(python 3\.\d+\)\s*$").expect("regex failure");
+    let re = Regex::new(r"^pip.+\(python 3\.[0-9]+\)\s*$").expect("regex failure");
     let matches = |s: String| re.is_match(&s);
 
     cmd!(sh, "{python3} -m pip --version").read().map(matches).unwrap_or(false)
@@ -90,7 +90,8 @@ fn dirs_not_in_path(stderr_output: &str) -> HashSet<&str> {
     let re = Regex::new(r"The script (?P<script_name>[^\s]+) is installed in '(?P<path>[^']+)' which is not on PATH").expect("regex failure");
 
     re.captures_iter(&stderr_output)
-        .map(|warning_line| warning_line.name("path").unwrap().as_str())
+        .filter_map(|caps| caps.name("path"))
+        .map(|group| group.as_str())
         .collect()
 }
 
