@@ -36,11 +36,11 @@ use anvil_core::{
     },
     types::{EvmMineOptions, Forking, GethDebugTracingOptions, Index, Work},
 };
-use anvil_rpc::response::ResponseResult;
+use anvil_rpc::{error::RpcError, response::ResponseResult};
 use ethers::{
     abi::ethereum_types::H64,
     prelude::TxpoolInspect,
-    providers::ProviderError,
+    providers::{Http, ProviderError, RetryClient},
     types::{
         transaction::eip2930::{AccessList, AccessListItem, AccessListWithGasUsed},
         Address, Block, BlockId, BlockNumber, Bytes, Log, Trace, Transaction, TransactionReceipt,
@@ -1143,7 +1143,8 @@ impl EthApi {
         _opts: GethDebugTracingOptions,
     ) -> Result<Vec<Trace>> {
         node_info!("debug_traceTransaction");
-        Err(BlockchainError::RpcUnimplemented)
+        // return `MethodNotFound` until implemented <https://github.com/foundry-rs/foundry/issues/1737>
+        Err(RpcError::method_not_found().into())
     }
 
     /// Returns traces for the transaction hash via parity's tracing endpoint
@@ -1431,9 +1432,10 @@ impl EthApi {
     pub fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
         if let Some(fork) = self.backend.get_fork() {
-            let new_provider = Arc::new(Provider::try_from(&url).map_err(|_| {
-                ProviderError::CustomError(format!("Failed to parse invalid url {}", url))
-            })?);
+            let new_provider =
+                Arc::new(Provider::<RetryClient<Http>>::new_client(&url, 10, 1000).map_err(
+                    |_| ProviderError::CustomError(format!("Failed to parse invalid url {}", url)),
+                )?);
             let mut config = fork.config.write();
             trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url, url);
             config.eth_rpc_url = url;

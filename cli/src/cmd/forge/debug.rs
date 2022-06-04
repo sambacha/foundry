@@ -21,7 +21,7 @@ pub struct DebugArgs {
     pub args: Vec<String>,
 
     /// The name of the contract you want to run.
-    #[clap(long, alias = "tc", value_name = "CONTRACT_NAME")]
+    #[clap(long, visible_alias = "tc", value_name = "CONTRACT_NAME")]
     pub target_contract: Option<String>,
 
     /// The signature of the function you want to call in the contract, or raw calldata.
@@ -59,6 +59,9 @@ impl DebugArgs {
             resume: false,
             debug: true,
             slow: false,
+            etherscan_api_key: None,
+            verify: false,
+            json: false,
         };
         script.run_script().await
     }

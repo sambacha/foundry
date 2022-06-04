@@ -57,7 +57,7 @@ pub struct VerifyArgs {
     pub compiler_version: Option<String>,
 
     #[clap(
-        alias = "optimizer-runs",
+        visible_alias = "optimizer-runs",
         long,
         help = "The number of optimization runs used to build the smart contract.",
         value_name = "NUM"
@@ -66,7 +66,7 @@ pub struct VerifyArgs {
 
     #[clap(
         long,
-        alias = "chain-id",
+        visible_alias = "chain-id",
         env = "CHAIN",
         help = "The chain ID the contract is deployed to.",
         default_value = "mainnet",
@@ -114,13 +114,14 @@ impl VerifyArgs {
         let retry: Retry = self.retry.into();
         let resp = retry.run_async(|| {
             async {
+                println!("\nSubmitting verification for [{}] {:?}.", verify_args.contract_name, verify_args.address);
                 let resp = etherscan
                     .submit_contract_verification(&verify_args)
                     .await
                     .wrap_err("Failed to submit contract verification")?;
 
                 if resp.status == "0" {
-                    if resp.message == "Contract source code already verified" {
+                    if resp.result == "Contract source code already verified" {
                         return Ok(None)
                     }
 
@@ -144,7 +145,7 @@ impl VerifyArgs {
 
         if let Some(resp) = resp {
             println!(
-                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}#code",
+                "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
                 resp.message,
                 resp.result,
                 etherscan.address_url(self.address)
@@ -159,6 +160,8 @@ impl VerifyArgs {
                 };
                 return check_args.run().await
             }
+        } else {
+            println!("Contract source code already verified");
         }
 
         Ok(())
@@ -438,7 +441,7 @@ pub struct VerifyCheckArgs {
 
     #[clap(
         long,
-        alias = "chain-id",
+        visible_alias = "chain-id",
         env = "CHAIN",
         help = "The chain ID the contract is deployed to.",
         default_value = "mainnet",

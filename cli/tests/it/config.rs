@@ -30,6 +30,7 @@ forgetest!(can_extract_config_values, |prj: TestProject, mut cmd: TestCommand| {
         __root: Default::default(),
         src: "test-src".into(),
         test: "test-test".into(),
+        script: "test-script".into(),
         out: "out-test".into(),
         libs: vec!["lib-test".into()],
         cache: true,
@@ -371,13 +372,12 @@ forgetest!(can_set_gas_price, |prj: TestProject, mut cmd: TestCommand| {
 // test that optimizer runs works
 forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCommand| {
     let config = cmd.config();
-    let remappings = config.get_all_remappings();
+    let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     pretty_assertions::assert_eq!(
         remappings,
         vec![
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
-            "forge-std/=lib/forge-std/src/".parse().unwrap(),
-            "src/=src/".parse().unwrap(),
+            "forge-std/=lib/forge-std/src/".parse().unwrap()
         ]
     );
     // create a new lib directly in the `lib` folder
@@ -389,7 +389,7 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
     let config = cmd.config();
-    let remappings = config.get_all_remappings();
+    let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     pretty_assertions::assert_eq!(
         remappings,
         vec![
@@ -397,7 +397,6 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
-            "src/=src/".parse().unwrap(),
         ]
     );
 
@@ -410,7 +409,8 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
 
     let another_config = cmd.config();
-    let remappings = another_config.get_all_remappings();
+    let remappings =
+        another_config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     pretty_assertions::assert_eq!(
         remappings,
         vec![
@@ -420,14 +420,13 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
             "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
-            "src/=src/".parse().unwrap(),
         ]
     );
 
     config.src = "custom-source-dir".into();
     pretty_err(&toml_file, fs::write(&toml_file, config.to_string_pretty().unwrap()));
     let config = cmd.config();
-    let remappings = config.get_all_remappings();
+    let remappings = config.remappings.iter().cloned().map(Remapping::from).collect::<Vec<_>>();
     pretty_assertions::assert_eq!(
         remappings,
         vec![
@@ -437,7 +436,6 @@ forgetest_init!(can_detect_lib_foundry_toml, |prj: TestProject, mut cmd: TestCom
             "nested-lib/=lib/nested-lib/src/".parse().unwrap(),
             "nested-twice/=lib/nested-lib/lib/another-lib/lib/nested-twice/".parse().unwrap(),
             "nested/=lib/nested-lib/lib/nested/".parse().unwrap(),
-            "src/=src/".parse().unwrap(),
         ]
     );
 });
@@ -463,7 +461,7 @@ forgetest_init!(can_prioritise_closer_lib_remappings, |prj: TestProject, mut cmd
             "dep1/=lib/dep1/src/".parse().unwrap(),
             "ds-test/=lib/forge-std/lib/ds-test/src/".parse().unwrap(),
             "forge-std/=lib/forge-std/src/".parse().unwrap(),
-            "src/=src/".parse().unwrap(),
+            "src/=src/".parse().unwrap()
         ]
     );
 });
