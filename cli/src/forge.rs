@@ -101,6 +101,9 @@ fn main() -> eyre::Result<()> {
         Subcommands::Tree(cmd) => {
             cmd.run()?;
         }
+        Subcommands::Certora(cmd) => {
+            cmd.run()?;
+        }
     }
 
     Ok(())
