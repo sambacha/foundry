@@ -32,7 +32,9 @@ COPY ./Cargo.toml /opt/foundry/Cargo.toml
 COPY ./Cargo.lock /opt/foundry/Cargo.lock
 COPY . .
 
-RUN source $HOME/.profile && cargo build --release
+RUN source $HOME/.profile && cargo update
+
+RUN cargo build --release
 
 # build for release
 RUN rm -rf /opt/foundry/target/release/deps/
@@ -65,9 +67,9 @@ RUN set -eux; \
     apk add glibc.apk --force; \
     apk del --no-network .musl-deps;
 
-COPY --from=build-environment /opt/foundry/target/release/forge /usr/local/bin/forge
-COPY --from=build-environment /opt/foundry/target/release/cast /usr/local/bin/cast
-COPY --from=build-environment /opt/foundry/target/release/anvil /usr/local/bin/anvil
+COPY --chmod=0744 --from=build-environment /opt/foundry/target/release/forge /usr/bin/forge
+COPY --chmod=0744 --from=build-environment /opt/foundry/target/release/cast /usr/bin/cast
+COPY --chmod=0744 --from=build-environment /opt/foundry/target/release/anvil /usr/bin/anvil
 
 EXPOSE 8545/tcp
 EXPOSE 8545/udp
@@ -76,7 +78,7 @@ EXPOSE 3001/tcp
 
 STOPSIGNAL SIGQUIT
 
-ENTRYPOINT ["/bin/sh", "-c"]
+ENTRYPOINT ["/bin/sh", "-c", "/usr/bin/env \"$@\"", "--"]
 
 
 LABEL org.label-schema.build-date=$BUILD_DATE \
