@@ -1,3 +1,4 @@
+use super::*;
 use crate::{
     cmd::{get_cached_entry_by_name, unwrap_contracts},
     compile,
@@ -18,8 +19,6 @@ use foundry_utils::PostLinkInput;
 use std::{collections::BTreeMap, fs, str::FromStr};
 use tracing::warn;
 
-use super::*;
-
 impl ScriptArgs {
     /// Compiles the file or project and the verify metadata.
     pub fn compile(
@@ -32,6 +31,7 @@ impl ScriptArgs {
             &build_output.project,
             &script_config.config,
             unwrap_contracts(&build_output.highlevel_known_contracts, false),
+            self.retry.clone(),
         );
 
         Ok((build_output, verify))
