@@ -11,6 +11,7 @@ use ethers::{
     signers::WalletError,
     types::{Bytes, SignatureError, U256},
 };
+use foundry_common::SELECTOR_LEN;
 use foundry_evm::revm::Return;
 use serde::Serialize;
 use tracing::error;
@@ -59,6 +60,12 @@ pub enum BlockchainError {
     BlockOutOfRange(u64, u64),
     #[error("Resource not found")]
     BlockNotFound,
+    #[error("Required data unavailable")]
+    DataUnavailable,
+    #[error("Trie error: {0}")]
+    TrieError(String),
+    #[error("{0}")]
+    UintConversion(&'static str),
 }
 
 impl From<RpcError> for BlockchainError {
@@ -133,10 +140,10 @@ pub enum InvalidTransactionError {
 /// **Note:** it's assumed the `out` buffer starts with the call's signature
 fn decode_revert_reason(out: impl AsRef<[u8]>) -> Option<String> {
     let out = out.as_ref();
-    if out.len() < 4 {
+    if out.len() < SELECTOR_LEN {
         return None
     }
-    String::decode(&out[4..]).ok()
+    String::decode(&out[SELECTOR_LEN..]).ok()
 }
 
 /// Helper trait to easily convert results to rpc results
@@ -236,6 +243,13 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     message: err.to_string().into(),
                     data: None,
                 },
+                err @ BlockchainError::DataUnavailable => {
+                    RpcError::internal_error_with(err.to_string())
+                }
+                err @ BlockchainError::TrieError(_) => {
+                    RpcError::internal_error_with(err.to_string())
+                }
+                BlockchainError::UintConversion(err) => RpcError::invalid_params(err),
             }
             .into(),
         }

@@ -1,25 +1,28 @@
-use crate::{cmd::unwrap_contracts, utils::get_http_provider};
+use crate::cmd::{unwrap_contracts, LoadConfig};
+use std::sync::Arc;
 
 use ethers::{
     prelude::{artifacts::CompactContractBytecode, ArtifactId, Middleware, Signer},
     types::{transaction::eip2718::TypedTransaction, U256},
 };
-use forge::executor::opts::EvmOpts;
-use foundry_config::{figment::Figment, Config};
+use foundry_common::get_http_provider;
+use tracing::trace;
 
 use super::{sequence::ScriptSequence, *};
 
 impl ScriptArgs {
     /// Executes the script
     pub async fn run_script(mut self) -> eyre::Result<()> {
-        let figment: Figment = From::from(&self);
-        let evm_opts = figment.extract::<EvmOpts>()?;
+        trace!("executing script command");
+
+        let (config, evm_opts) = self.load_config_and_evm_opts_emit_warnings()?;
         let mut script_config = ScriptConfig {
             // dapptools compatibility
             sender_nonce: U256::one(),
-            config: Config::from_provider(figment).sanitized(),
+            config,
             evm_opts,
             called_function: None,
+            backend: None,
         };
 
         self.maybe_load_private_key(&mut script_config)?;
@@ -44,7 +47,7 @@ impl ScriptArgs {
                 .expect("You must provide an RPC URL (see --fork-url).")
                 .clone();
 
-            let provider = get_http_provider(&fork_url, true);
+            let provider = Arc::new(get_http_provider(&fork_url));
             let chain = provider.get_chainid().await?.as_u64();
 
             let mut deployment_sequence = ScriptSequence::load(
@@ -144,12 +147,18 @@ impl ScriptArgs {
                 }
 
                 verify.known_contracts = unwrap_contracts(&highlevel_known_contracts, false);
+
+                self.check_contract_sizes(
+                    result.transactions.as_ref(),
+                    &highlevel_known_contracts,
+                )?;
+
                 self.handle_broadcastable_transactions(
                     &target,
                     result,
                     libraries,
                     &mut decoder,
-                    &script_config,
+                    script_config,
                     verify,
                 )
                 .await?;

@@ -7,18 +7,18 @@ mod decoder;
 pub mod node;
 mod utils;
 
+use crate::{abi::CHEATCODE_ADDRESS, trace::identifier::LocalTraceIdentifier, CallKind};
 pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
-
-use crate::{abi::CHEATCODE_ADDRESS, CallKind};
 use ethers::{
     abi::{Address, RawLog},
     types::U256,
 };
+use foundry_common::contracts::{ContractsByAddress, ContractsByArtifact};
 use node::CallTraceNode;
 use revm::{CallContext, Return};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fmt::{self, Write},
 };
 use yansi::{Color, Paint};
@@ -42,8 +42,7 @@ impl CallTraceArena {
         match new_trace.depth {
             // The entry node, just update it
             0 => {
-                let node = &mut self.arena[0];
-                node.trace.update(new_trace);
+                self.arena[0].trace = new_trace;
                 0
             }
             // We found the parent node, add the new trace as a child
@@ -52,8 +51,12 @@ impl CallTraceArena {
 
                 let trace_location = self.arena[entry].children.len();
                 self.arena[entry].ordering.push(LogCallOrder::Call(trace_location));
-                let node =
-                    CallTraceNode { parent: Some(entry), trace: new_trace, ..Default::default() };
+                let node = CallTraceNode {
+                    parent: Some(entry),
+                    trace: new_trace,
+                    idx: id,
+                    ..Default::default()
+                };
                 self.arena.push(node);
                 self.arena[entry].children.push(id);
 
@@ -223,16 +226,16 @@ pub enum RawOrDecodedCall {
     Raw(Vec<u8>),
     /// Decoded calldata.
     ///
-    /// The first element in the tuple is the function name, and the second element is a vector of
-    /// decoded parameters.
-    Decoded(String, Vec<String>),
+    /// The first element in the tuple is the function name, second is the function signature and
+    /// the third element is a vector of decoded parameters.
+    Decoded(String, String, Vec<String>),
 }
 
 impl RawOrDecodedCall {
     pub fn to_raw(&self) -> Vec<u8> {
         match self {
             RawOrDecodedCall::Raw(raw) => raw.clone(),
-            RawOrDecodedCall::Decoded(_, _) => {
+            RawOrDecodedCall::Decoded(_, _, _) => {
                 vec![]
             }
         }
@@ -303,7 +306,7 @@ pub struct CallTrace {
     pub label: Option<String>,
     /// caller of this call
     pub caller: Address,
-    /// The destination address of the call
+    /// The destination address of the call or the address from the created contract
     pub address: Address,
     /// The kind of call this is
     pub kind: CallKind,
@@ -325,21 +328,9 @@ pub struct CallTrace {
 // === impl CallTrace ===
 
 impl CallTrace {
-    /// Updates a trace given another trace
-    fn update(&mut self, new_trace: Self) {
-        self.success = new_trace.success;
-        self.address = new_trace.address;
-        self.kind = new_trace.kind;
-        self.value = new_trace.value;
-        self.data = new_trace.data;
-        self.output = new_trace.output;
-        self.address = new_trace.address;
-        self.gas_cost = new_trace.gas_cost;
-    }
-
     /// Whether this is a contract creation or not
     pub fn created(&self) -> bool {
-        matches!(self.kind, CallKind::Create)
+        matches!(self.kind, CallKind::Create | CallKind::Create2)
     }
 }
 
@@ -385,7 +376,7 @@ impl fmt::Display for CallTrace {
                     assert!(bytes.len() >= 4);
                     (hex::encode(&bytes[0..4]), hex::encode(&bytes[4..]))
                 }
-                RawOrDecodedCall::Decoded(func, inputs) => (func.clone(), inputs.join(", ")),
+                RawOrDecodedCall::Decoded(func, _, inputs) => (func.clone(), inputs.join(", ")),
             };
 
             let action = match self.kind {
@@ -434,5 +425,32 @@ fn trace_color(trace: &CallTrace) -> Color {
         Color::Green
     } else {
         Color::Red
+    }
+}
+
+/// Given a list of traces and artifacts, it returns a map connecting address to abi
+pub fn load_contracts(
+    traces: Vec<(TraceKind, CallTraceArena)>,
+    known_contracts: Option<&ContractsByArtifact>,
+) -> ContractsByAddress {
+    if let Some(contracts) = known_contracts {
+        let local_identifier = LocalTraceIdentifier::new(contracts);
+        let mut decoder = CallTraceDecoderBuilder::new().build();
+        for (_, trace) in &traces {
+            decoder.identify(trace, &local_identifier);
+        }
+
+        decoder
+            .contracts
+            .iter()
+            .filter_map(|(addr, name)| {
+                if let Ok(Some((_, (abi, _)))) = contracts.find_by_name_or_identifier(name) {
+                    return Some((*addr, (name.clone(), abi.clone())))
+                }
+                None
+            })
+            .collect()
+    } else {
+        BTreeMap::new()
     }
 }

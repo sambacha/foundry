@@ -1,17 +1,52 @@
 //! Contains various tests related to forge script
 use anvil::{spawn, NodeConfig};
+use cast::SimpleCast;
 use ethers::abi::Address;
 use foundry_cli_test_utils::{
-    forgetest, forgetest_async,
-    util::{TestCommand, TestProject},
+    forgetest, forgetest_async, forgetest_init,
+    util::{OutputExt, TestCommand, TestProject},
     ScriptOutcome, ScriptTester,
 };
-
+use foundry_utils::rpc;
 use regex::Regex;
+use serde_json::Value;
 use std::{env, path::PathBuf, str::FromStr};
 
+// Tests that fork cheat codes can be used in script
+forgetest_init!(
+    #[ignore]
+    can_use_fork_cheat_codes_in_script,
+    |prj: TestProject, mut cmd: TestCommand| {
+        let script = prj
+            .inner()
+            .add_source(
+                "Foo",
+                r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity >=0.8.10;
+
+import "forge-std/Script.sol";
+
+contract ContractScript is Script {
+    function setUp() public {}
+
+    function run() public {
+        uint256 fork = vm.activeFork();
+        vm.rollFork(11469702);
+    }
+}
+   "#,
+            )
+            .unwrap();
+
+        let rpc = foundry_utils::rpc::next_http_rpc_endpoint();
+
+        cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvv"]);
+    }
+);
+
 // Tests that the `run` command works correctly
-forgetest!(can_execute_script_command, |prj: TestProject, mut cmd: TestCommand| {
+forgetest!(can_execute_script_command2, |prj: TestProject, mut cmd: TestCommand| {
     let script = prj
         .inner()
         .add_source(
@@ -30,16 +65,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script);
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1751
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command.stdout"),
+    );
 });
 
 // Tests that the `run` command works correctly when path *and* script name is specified
@@ -62,16 +91,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(format!("{}:Demo", script.display()));
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1751
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_fqn.stdout"),
+    );
 });
 
 // Tests that the run command can run arbitrary functions
@@ -94,16 +117,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).arg("--sig").arg("myFunction()");
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1751
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_with_sig.stdout"),
+    );
 });
 
 // Tests that the run command can run functions with arguments
@@ -129,18 +146,10 @@ contract Demo {
         .unwrap();
 
     cmd.arg("script").arg(script).arg("--sig").arg("run(uint256,uint256)").arg("1").arg("2");
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 3957
-
-== Logs ==
-  script ran
-  1
-  2
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_with_args.stdout"),
+    );
 });
 
 // Tests that the run command can run functions with return values
@@ -162,25 +171,140 @@ contract Demo {
         )
         .unwrap();
     cmd.arg("script").arg(script);
-    let output = cmd.stdout_lossy();
-    assert!(output.ends_with(
-        "Compiler run successful
-Script ran successfully.
-Gas used: 1836
-
-== Return ==
-result: uint256 255
-1: uint8 3
-
-== Logs ==
-  script ran
-"
-    ));
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_execute_script_command_with_returned.stdout"),
+    );
 });
+
+forgetest_async!(
+    can_broadcast_script_skipping_simulation,
+    |prj: TestProject, mut cmd: TestCommand| async move {
+        foundry_cli_test_utils::util::initialize(prj.root());
+        // This example script would fail in on-chain simulation
+        let deploy_script = prj
+            .inner()
+            .add_source(
+                "DeployScript",
+                r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "forge-std/Script.sol";
+
+contract HashChecker {
+    bytes32 public lastHash;
+    function update() public {
+        bytes32 newHash = blockhash(block.number - 1);
+        require(newHash != lastHash, "Hash didn't change");
+        lastHash = newHash;
+    }
+
+    function checkLastHash() public {
+        require(lastHash != bytes32(0),  "Hash shouldn't be zero");
+    }
+}
+contract DeployScript is Script {
+    function run() external returns (uint256 result, uint8) {
+        vm.startBroadcast();
+        HashChecker hashChecker = new HashChecker();
+    }
+}"#,
+            )
+            .unwrap();
+
+        let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
+
+        let node_config = NodeConfig::test()
+            .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_endpoint()))
+            .silent();
+        let (_api, handle) = spawn(node_config).await;
+        let private_key =
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string();
+        cmd.set_current_dir(prj.root());
+
+        cmd.args([
+            "script",
+            &deploy_contract,
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--fork-url",
+            &handle.http_endpoint(),
+            "-vvvvv",
+            "--broadcast",
+            "--slow",
+            "--skip-simulation",
+            "--private-key",
+            &private_key,
+        ]);
+
+        let output = cmd.stdout_lossy();
+
+        assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
+        assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+
+        let run_log =
+            std::fs::read_to_string("broadcast/DeployScript.sol/1/run-latest.json").unwrap();
+        let run_object: Value = serde_json::from_str(&run_log).unwrap();
+        let contract_address = SimpleCast::checksum_address(
+            &ethers::prelude::H160::from_str(
+                run_object["receipts"][0]["contractAddress"].as_str().unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let run_code = r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.10;
+import "forge-std/Script.sol";
+import { HashChecker } from "./DeployScript.sol";
+
+contract RunScript is Script {
+    function run() external returns (uint256 result, uint8) {
+        vm.startBroadcast();
+        HashChecker hashChecker = HashChecker(CONTRACT_ADDRESS);
+        uint numUpdates = 8;
+        vm.roll(block.number - numUpdates);
+        for(uint i = 0; i < numUpdates; i++) {
+            vm.roll(block.number + 1);
+            hashChecker.update();
+            hashChecker.checkLastHash();
+        }
+    }
+}"#
+        .replace("CONTRACT_ADDRESS", &contract_address);
+
+        let run_script = prj.inner().add_source("RunScript", run_code).unwrap();
+        let run_contract = run_script.display().to_string() + ":RunScript";
+
+        cmd.forge_fuse();
+        cmd.set_current_dir(prj.root());
+        cmd.args([
+            "script",
+            &run_contract,
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--fork-url",
+            &handle.http_endpoint(),
+            "-vvvvv",
+            "--broadcast",
+            "--slow",
+            "--skip-simulation",
+            "--gas-estimate-multiplier",
+            "200",
+            "--private-key",
+            &private_key,
+        ]);
+
+        let output = cmd.stdout_lossy();
+        assert!(output.contains("SKIPPING ON CHAIN SIMULATION"));
+        assert!(output.contains("ONCHAIN EXECUTION COMPLETE & SUCCESSFUL"));
+    }
+);
 
 forgetest_async!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let mut tester = ScriptTester::new(cmd, &handle.http_endpoint(), prj.root());
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
         .load_private_keys(vec![0, 1])
@@ -194,7 +318,7 @@ forgetest_async!(can_deploy_script_without_lib, |prj: TestProject, cmd: TestComm
 
 forgetest_async!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let mut tester = ScriptTester::new(cmd, &handle.http_endpoint(), prj.root());
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
         .load_private_keys(vec![0, 1])
@@ -208,7 +332,7 @@ forgetest_async!(can_deploy_script_with_lib, |prj: TestProject, cmd: TestCommand
 
 forgetest_async!(can_resume_script, |prj: TestProject, cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let mut tester = ScriptTester::new(cmd, &handle.http_endpoint(), prj.root());
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
         .load_private_keys(vec![0])
@@ -226,7 +350,7 @@ forgetest_async!(can_resume_script, |prj: TestProject, cmd: TestCommand| async m
 
 forgetest_async!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let mut tester = ScriptTester::new(cmd, &handle.http_endpoint(), prj.root());
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
         .add_deployer(2)
@@ -241,7 +365,7 @@ forgetest_async!(can_deploy_broadcast_wrap, |prj: TestProject, cmd: TestCommand|
 
 forgetest_async!(panic_no_deployer_set, |prj: TestProject, cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let mut tester = ScriptTester::new(cmd, &handle.http_endpoint(), prj.root());
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
         .load_private_keys(vec![0, 1])
@@ -253,7 +377,7 @@ forgetest_async!(panic_no_deployer_set, |prj: TestProject, cmd: TestCommand| asy
 
 forgetest_async!(can_deploy_no_arg_broadcast, |prj: TestProject, cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let mut tester = ScriptTester::new(cmd, &handle.http_endpoint(), prj.root());
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
         .add_deployer(0)
@@ -268,7 +392,7 @@ forgetest_async!(can_deploy_no_arg_broadcast, |prj: TestProject, cmd: TestComman
 
 forgetest_async!(can_deploy_with_create2, |prj: TestProject, cmd: TestCommand| async move {
     let (api, handle) = spawn(NodeConfig::test()).await;
-    let mut tester = ScriptTester::new(cmd, &handle.http_endpoint(), prj.root());
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     // Prepare CREATE2 Deployer
     let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
@@ -292,7 +416,7 @@ forgetest_async!(
     can_deploy_100_txes_concurrently,
     |prj: TestProject, cmd: TestCommand| async move {
         let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new(cmd, &handle.http_endpoint(), prj.root());
+        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
             .load_private_keys(vec![0])
@@ -309,7 +433,7 @@ forgetest_async!(
     can_deploy_mixed_broadcast_modes,
     |prj: TestProject, cmd: TestCommand| async move {
         let (_api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new(cmd, &handle.http_endpoint(), prj.root());
+        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         tester
             .load_private_keys(vec![0])
@@ -324,7 +448,7 @@ forgetest_async!(
 
 forgetest_async!(deploy_with_setup, |prj: TestProject, cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let mut tester = ScriptTester::new(cmd, &handle.http_endpoint(), prj.root());
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
         .load_private_keys(vec![0])
@@ -338,13 +462,13 @@ forgetest_async!(deploy_with_setup, |prj: TestProject, cmd: TestCommand| async m
 
 forgetest_async!(fail_broadcast_staticcall, |prj: TestProject, cmd: TestCommand| async move {
     let (_api, handle) = spawn(NodeConfig::test()).await;
-    let mut tester = ScriptTester::new(cmd, &handle.http_endpoint(), prj.root());
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
     tester
         .load_private_keys(vec![0])
         .await
         .add_sig("BroadcastTestNoLinking", "errorStaticCall()")
-        .simulate(ScriptOutcome::FailedScript);
+        .simulate(ScriptOutcome::StaticCallNotAllowed);
 });
 
 forgetest_async!(
@@ -352,7 +476,7 @@ forgetest_async!(
     check_broadcast_log,
     |prj: TestProject, cmd: TestCommand| async move {
         let (api, handle) = spawn(NodeConfig::test()).await;
-        let mut tester = ScriptTester::new(cmd, &handle.http_endpoint(), prj.root());
+        let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
 
         // Prepare CREATE2 Deployer
         let addr = Address::from_str("0x4e59b44847b379578588920ca78fbf26c0b4956c").unwrap();
@@ -391,3 +515,24 @@ forgetest_async!(
         assert!(fixtures_log == run_log);
     }
 );
+
+forgetest_async!(test_default_sender_balance, |prj: TestProject, cmd: TestCommand| async move {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    // Expect the default sender to have uint256.max balance.
+    tester
+        .add_sig("TestInitialBalance", "runDefaultSender()")
+        .simulate(ScriptOutcome::OkSimulation);
+});
+
+forgetest_async!(test_custom_sender_balance, |prj: TestProject, cmd: TestCommand| async move {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let mut tester = ScriptTester::new_broadcast(cmd, &handle.http_endpoint(), prj.root());
+
+    // Expect the sender to have its starting balance.
+    tester
+        .add_deployer(0)
+        .add_sig("TestInitialBalance", "runCustomSender()")
+        .simulate(ScriptOutcome::OkSimulation);
+});

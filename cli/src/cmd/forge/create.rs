@@ -1,11 +1,11 @@
 //! Create command
 use super::verify;
 use crate::{
-    cmd::{forge::build::CoreBuildArgs, utils, RetryArgs},
+    cmd::{forge::build::CoreBuildArgs, retry::RETRY_VERIFY_ON_CREATE, utils, LoadConfig},
     compile,
     opts::{EthereumOpts, TransactionOpts, WalletType},
-    utils::get_http_provider,
 };
+use cast::SimpleCast;
 use clap::{Parser, ValueHint};
 use ethers::{
     abi::{Abi, Constructor, Token},
@@ -17,14 +17,12 @@ use ethers::{
     types::{transaction::eip2718::TypedTransaction, Chain},
 };
 use eyre::Context;
-use foundry_common::fs;
-use foundry_config::Config;
+use foundry_common::{fs, get_http_provider};
 use foundry_utils::parse_tokens;
 use rustc_hex::ToHex;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
-
-pub const RETRY_VERIFY_ON_CREATE: RetryArgs = RetryArgs { retries: 15, delay: Some(3) };
+use tracing::log::trace;
 
 #[derive(Debug, Clone, Parser)]
 pub struct CreateArgs {
@@ -72,6 +70,16 @@ pub struct CreateArgs {
 
     #[clap(long, help = "Verify contract after creation.")]
     verify: bool,
+
+    #[clap(
+        long,
+        help = "Send via `eth_sendTransaction` using the `--from` argument or `$ETH_FROM` as sender",
+        requires = "from"
+    )]
+    unlocked: bool,
+
+    #[clap(flatten)]
+    pub verifier: verify::VerifierArg,
 }
 
 impl CreateArgs {
@@ -88,7 +96,7 @@ impl CreateArgs {
 
         if let Some(ref mut path) = self.contract.path {
             // paths are absolute in the project's output
-            *path = format!("{}", canonicalized(project.root().join(&path)).display());
+            *path = canonicalized(project.root().join(&path)).to_string_lossy().to_string();
         }
 
         let (abi, bin, _) = utils::remove_contract(&mut output, &self.contract)?;
@@ -109,11 +117,10 @@ impl CreateArgs {
         };
 
         // Add arguments to constructor
-        let config = Config::from(&self.eth);
-        let provider = get_http_provider(
-            &config.eth_rpc_url.unwrap_or_else(|| "http://localhost:8545".to_string()),
-            false,
-        );
+        let config = self.eth.load_config_emit_warnings();
+        let provider = Arc::new(get_http_provider(
+            config.eth_rpc_url.as_deref().unwrap_or("http://localhost:8545"),
+        ));
         let params = match abi.constructor {
             Some(ref v) => {
                 let constructor_args =
@@ -144,6 +151,16 @@ impl CreateArgs {
             }
             None => vec![],
         };
+
+        if self.unlocked {
+            let sender = self.eth.wallet.from.expect("is required");
+            trace!("creating with unlocked account={:?}", sender);
+            // use unlocked provider
+            let provider =
+                Arc::try_unwrap(provider).expect("Only one ref; qed.").with_sender(sender);
+            self.deploy(abi, bin, params, provider).await?;
+            return Ok(())
+        }
 
         // Deploy with signer
         let chain_id = provider.get_chainid().await?;
@@ -226,17 +243,18 @@ impl CreateArgs {
         }
 
         let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
+
         let address = deployed_contract.address();
         if self.json {
             let output = json!({
-                "deployer": deployer_address,
-                "deployedTo": address,
+                "deployer": SimpleCast::checksum_address(&deployer_address)?,
+                "deployedTo": SimpleCast::checksum_address(&address)?,
                 "transactionHash": receipt.transaction_hash
             });
             println!("{output}");
         } else {
-            println!("Deployer: {deployer_address:?}");
-            println!("Deployed to: {:?}", address);
+            println!("Deployer: {}", SimpleCast::checksum_address(&deployer_address)?);
+            println!("Deployed to: {}", SimpleCast::checksum_address(&address)?);
             println!("Transaction hash: {:?}", receipt.transaction_hash);
         };
 
@@ -267,16 +285,14 @@ impl CreateArgs {
             constructor_args,
             num_of_optimizations,
             chain: chain.into(),
-            etherscan_key: self
-                .eth
-                .etherscan_api_key
-                .ok_or(eyre::eyre!("ETHERSCAN_API_KEY must be set"))?,
-            project_paths: self.opts.project_paths,
+            etherscan_key: self.eth.etherscan_api_key,
             flatten: false,
             force: false,
             watch: true,
             retry: RETRY_VERIFY_ON_CREATE,
             libraries: vec![],
+            root: None,
+            verifier: self.verifier,
         };
         println!("Waiting for etherscan to detect contract deployment...");
         verify.run().await

@@ -1,4 +1,4 @@
-use super::{Cheatcodes, Debugger, LogCollector, Tracer};
+use super::{Cheatcodes, Debugger, Fuzzer, LogCollector, Tracer};
 use crate::{
     coverage::HitMaps,
     debug::DebugArena,
@@ -41,6 +41,7 @@ pub struct InspectorStack {
     pub logs: Option<LogCollector>,
     pub cheatcodes: Option<Cheatcodes>,
     pub debugger: Option<Debugger>,
+    pub fuzzer: Option<Fuzzer>,
     pub coverage: Option<CoverageCollector>,
 }
 
@@ -102,6 +103,7 @@ where
         call_inspectors!(
             inspector,
             [
+                &mut self.fuzzer,
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
@@ -165,6 +167,7 @@ where
         call_inspectors!(
             inspector,
             [
+                &mut self.fuzzer,
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
@@ -196,6 +199,7 @@ where
         call_inspectors!(
             inspector,
             [
+                &mut self.fuzzer,
                 &mut self.debugger,
                 &mut self.tracer,
                 &mut self.coverage,
@@ -212,9 +216,10 @@ where
                     is_static,
                 );
 
-                // If the inspector returns a different status we assume it wants to tell us
-                // something
-                if new_status != status {
+                // If the inspector returns a different status or a revert with a non-empty message,
+                // we assume it wants to tell us something
+                if new_status != status || (new_status == Return::Revert && new_retdata != retdata)
+                {
                     return (new_status, new_gas, new_retdata)
                 }
             }
