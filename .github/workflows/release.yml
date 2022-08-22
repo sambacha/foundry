@@ -24,7 +24,7 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
 
@@ -107,7 +107,7 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
@@ -141,6 +141,20 @@ jobs:
         with:
           command: build
           args: --release --bins --target ${{ matrix.job.target }}
+
+
+      - name: Reduce binariy size
+        uses: crazy-max/ghaction-upx@v1
+        id: upx
+        env:
+          PLATFORM_NAME: ${{ matrix.job.platform }}
+          TARGET: ${{ matrix.job.target }}
+          ARCH: ${{ matrix.job.arch }}
+        with:
+          version: latest
+          files: |
+            ./target/${TARGET}/release forge cast
+          args: -9
 
       - name: Archive binaries
         id: artifacts
@@ -187,6 +201,7 @@ jobs:
 
       # Creates the release for this specific version
       - name: Create release
+        id: release
         uses: softprops/action-gh-release@v1
         with:
           name: ${{ needs.prepare.outputs.release_name }}
@@ -218,7 +233,7 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       # Moves the `nightly` tag to `HEAD`
       - name: Move nightly tag
