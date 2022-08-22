@@ -14,7 +14,7 @@ use ethers::{
 use foundry_utils::IntoFunction;
 use hashbrown::HashMap;
 use revm::{
-    db::DatabaseCommit, return_ok, Account, BlockEnv, CreateScheme, Return, TransactOut,
+    db::DatabaseCommit, return_ok, Account, BlockEnv, Bytecode, CreateScheme, Return, TransactOut,
     TransactTo, TxEnv, EVM,
 };
 /// Reexport commonly used revm types
@@ -39,7 +39,10 @@ pub mod snapshot;
 
 use crate::{
     coverage::HitMaps,
-    executor::inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER},
+    executor::{
+        backend::DatabaseExt,
+        inspector::{InspectorStack, DEFAULT_CREATE2_DEPLOYER},
+    },
 };
 pub use builder::ExecutorBuilder;
 
@@ -81,12 +84,20 @@ impl Executor {
     ) -> Self {
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // does not fail
-        backend.db.insert_account_info(
+        backend.insert_account_info(
             CHEATCODE_ADDRESS,
-            revm::AccountInfo { code: Some(Bytes::from_static(&[1])), ..Default::default() },
+            revm::AccountInfo {
+                code: Some(Bytecode::new_raw(vec![0u8].into()).to_checked()),
+                ..Default::default()
+            },
         );
 
         Executor { backend, env, inspector_config, gas_limit }
+    }
+
+    /// Returns a reference to the Env
+    pub fn env(&mut self) -> &Env {
+        &self.env
     }
 
     /// Returns a mutable reference to the Env
@@ -101,6 +112,16 @@ impl Executor {
 
     pub fn backend(&self) -> &Backend {
         &self.backend
+    }
+
+    /// Returns an immutable reference to the InspectorStackConfig
+    pub fn inspector_config(&self) -> &InspectorStackConfig {
+        &self.inspector_config
+    }
+
+    /// Returns a mutable reference to the InspectorStackConfig
+    pub fn inspector_config_mut(&mut self) -> &mut InspectorStackConfig {
+        &mut self.inspector_config
     }
 
     /// Creates the default CREATE2 Contract Deployer for local tests and scripts.
@@ -171,10 +192,11 @@ impl Executor {
     pub fn setup(
         &mut self,
         from: Option<Address>,
-        address: Address,
+        to: Address,
     ) -> std::result::Result<CallResult<()>, EvmError> {
         let from = from.unwrap_or(CALLER);
-        self.call_committing::<(), _, _>(from, address, "setUp()", (), 0.into(), None)
+        self.backend_mut().set_test_contract(to).set_caller(from);
+        self.call_committing::<(), _, _>(from, to, "setUp()", (), 0.into(), None)
     }
 
     /// Performs a call to an account on the current state of the VM.
@@ -241,21 +263,13 @@ impl Executor {
         }
     }
 
-    /// Performs a raw call to an account on the current state of the VM.
-    ///
-    /// The state after the call is persisted.
-    pub fn call_raw_committing(
-        &mut self,
-        from: Address,
-        to: Address,
-        calldata: Bytes,
-        value: U256,
-    ) -> eyre::Result<RawCallResult> {
-        let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
+    /// Execute the transaction configured in `env.tx` and commit the state to the database
+    pub fn commit_tx_with_env(&mut self, env: Env) -> eyre::Result<RawCallResult> {
+        let stipend = calc_stipend(&env.tx.data, env.cfg.spec_id);
 
         // Build VM
         let mut evm = EVM::new();
-        evm.env = self.build_env(from, TransactTo::Call(to), calldata, value);
+        evm.env = env;
         let mut inspector = self.inspector_config.stack();
         evm.database(self.backend_mut());
 
@@ -307,6 +321,20 @@ impl Executor {
         })
     }
 
+    /// Performs a raw call to an account on the current state of the VM.
+    ///
+    /// The state after the call is persisted.
+    pub fn call_raw_committing(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: Bytes,
+        value: U256,
+    ) -> eyre::Result<RawCallResult> {
+        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
+        self.commit_tx_with_env(env)
+    }
+
     /// Executes the test function call
     pub fn execute_test<D: Detokenize, T: Tokenize, F: IntoFunction>(
         &mut self,
@@ -323,9 +351,12 @@ impl Executor {
         // execute the call
         let mut inspector = self.inspector_config.stack();
         let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
-        let env = self.build_env(from, TransactTo::Call(test_contract), calldata, value);
+        let env = self.build_test_env(from, TransactTo::Call(test_contract), calldata, value);
         let (status, out, gas, state_changeset, logs) =
             self.backend_mut().inspect_ref(env, &mut inspector);
+
+        // if there are multiple forks we need to merge them
+        let logs = self.backend.merged_logs(logs);
 
         let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
         let call_result = convert_executed_call(inspector, executed_call)?;
@@ -366,32 +397,34 @@ impl Executor {
         let mut inspector = self.inspector_config.stack();
         let stipend = calc_stipend(&calldata, self.env.cfg.spec_id);
         // Build VM
-        let env = self.build_env(from, TransactTo::Call(to), calldata, value);
+        let env = self.build_test_env(from, TransactTo::Call(to), calldata, value);
         let mut db = FuzzBackendWrapper::new(self.backend());
         let (status, out, gas, state_changeset, logs) = db.inspect_ref(env, &mut inspector);
+
+        let logs = db.backend.merged_logs(logs);
+
         let executed_call = ExecutedCall { status, out, gas, state_changeset, logs, stipend };
         convert_executed_call(inspector, executed_call)
     }
 
-    /// Deploys a contract and commits the new state to the underlying database.
-    ///
-    /// Executes a CREATE transaction with the contract `code` and persistent database state
-    /// modifications
-    pub fn deploy(
+    /// Deploys a contract using the given `env` and commits the new state to the underlying
+    /// database
+    pub fn deploy_with_env(
         &mut self,
-        from: Address,
-        code: Bytes,
-        value: U256,
+        env: Env,
         abi: Option<&Abi>,
     ) -> Result<DeployResult, EvmError> {
-        trace!(sender=?from, "deploying contract");
-        let mut evm = EVM::new();
-        evm.env = self.build_env(from, TransactTo::Create(CreateScheme::Create), code, value);
+        trace!(sender=?env.tx.caller, "deploying contract");
 
         let mut inspector = self.inspector_config.stack();
-        evm.database(self.backend_mut());
+        let ((status, out, gas, _), env) = {
+            let mut evm = EVM::new();
+            evm.env = env;
+            evm.database(self.backend_mut());
+            let out = evm.inspect_commit(&mut inspector);
+            (out, evm.env)
+        };
 
-        let (status, out, gas, _) = evm.inspect_commit(&mut inspector);
         let InspectorData { logs, labels, traces, debug, cheatcodes, .. } =
             inspector.collect_inspector_states();
 
@@ -437,8 +470,12 @@ impl Executor {
             }
         };
 
+        // also mark this library as persistent, this will ensure that the state of the library is
+        // persistent across fork swaps in forking mode
+        self.backend.add_persistent_account(address);
+
         // Persist the changed block environment
-        self.inspector_config.block = evm.env.block.clone();
+        self.inspector_config.block = env.block;
 
         // Persist cheatcode state
         self.inspector_config.cheatcodes = cheatcodes;
@@ -446,6 +483,21 @@ impl Executor {
         trace!(address=?address, "deployed contract");
 
         Ok(DeployResult { address, gas, logs, traces, debug })
+    }
+
+    /// Deploys a contract and commits the new state to the underlying database.
+    ///
+    /// Executes a CREATE transaction with the contract `code` and persistent database state
+    /// modifications
+    pub fn deploy(
+        &mut self,
+        from: Address,
+        code: Bytes,
+        value: U256,
+        abi: Option<&Abi>,
+    ) -> Result<DeployResult, EvmError> {
+        let env = self.build_test_env(from, TransactTo::Create(CreateScheme::Create), code, value);
+        self.deploy_with_env(env, abi)
     }
 
     /// Check if a call to a test contract was successful.
@@ -485,11 +537,17 @@ impl Executor {
         should_fail ^ success
     }
 
-    /// Creates the environment to use when executing the transaction
+    /// Creates the environment to use when executing a transaction in a test context
     ///
     /// If using a backend with cheatcodes, `tx.gas_price` and `block.number` will be overwritten by
     /// the cheatcode state inbetween calls.
-    fn build_env(&self, caller: Address, transact_to: TransactTo, data: Bytes, value: U256) -> Env {
+    fn build_test_env(
+        &self,
+        caller: Address,
+        transact_to: TransactTo,
+        data: Bytes,
+        value: U256,
+    ) -> Env {
         Env {
             cfg: self.env.cfg.clone(),
             // We always set the gas price to 0 so we can execute the transaction regardless of
@@ -664,7 +722,7 @@ fn convert_executed_call(
         _ => Bytes::default(),
     };
 
-    let InspectorData { logs, labels, traces, debug, cheatcodes, coverage, .. } =
+    let InspectorData { logs, labels, traces, coverage, debug, cheatcodes } =
         inspector.collect_inspector_states();
 
     let transactions = if let Some(cheats) = cheatcodes {

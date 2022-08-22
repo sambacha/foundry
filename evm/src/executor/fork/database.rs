@@ -7,11 +7,13 @@ use crate::{
     },
     revm::db::CacheDB,
 };
-use bytes::Bytes;
-use ethers::prelude::{Address, H256, U256};
+use ethers::{
+    prelude::{Address, H256, U256},
+    types::BlockId,
+};
 use hashbrown::HashMap as Map;
 use parking_lot::Mutex;
-use revm::{db::DatabaseRef, Account, AccountInfo, Database, DatabaseCommit};
+use revm::{db::DatabaseRef, Account, AccountInfo, Bytecode, Database, DatabaseCommit};
 use std::{collections::BTreeMap, sync::Arc};
 use tracing::{trace, warn};
 
@@ -65,10 +67,12 @@ impl ForkedDatabase {
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
-    pub fn reset(&mut self, _url: Option<String>, block_number: Option<u64>) -> Result<(), String> {
-        if let Some(block_number) = block_number {
-            self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
-        }
+    pub fn reset(
+        &mut self,
+        _url: Option<String>,
+        block_number: impl Into<BlockId>,
+    ) -> Result<(), String> {
+        self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
 
         // TODO need to find a way to update generic provider via url
 
@@ -142,11 +146,11 @@ impl ForkedDatabase {
 
 impl Database for ForkedDatabase {
     fn basic(&mut self, address: Address) -> AccountInfo {
-        self.cache_db.basic(address)
+        Database::basic(&mut self.cache_db, address)
     }
 
-    fn code_by_hash(&mut self, code_hash: H256) -> bytes::Bytes {
-        self.cache_db.code_by_hash(code_hash)
+    fn code_by_hash(&mut self, code_hash: H256) -> Bytecode {
+        Database::code_by_hash(&mut self.cache_db, code_hash)
     }
 
     fn storage(&mut self, address: Address, index: U256) -> U256 {
@@ -154,7 +158,7 @@ impl Database for ForkedDatabase {
     }
 
     fn block_hash(&mut self, number: U256) -> H256 {
-        self.cache_db.block_hash(number)
+        Database::block_hash(&mut self.cache_db, number)
     }
 }
 
@@ -163,7 +167,7 @@ impl DatabaseRef for ForkedDatabase {
         self.cache_db.basic(address)
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> bytes::Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
         self.cache_db.code_by_hash(code_hash)
     }
 
@@ -212,7 +216,7 @@ impl DatabaseRef for ForkDbSnapshot {
         }
     }
 
-    fn code_by_hash(&self, code_hash: H256) -> Bytes {
+    fn code_by_hash(&self, code_hash: H256) -> Bytecode {
         self.local.code_by_hash(code_hash)
     }
 

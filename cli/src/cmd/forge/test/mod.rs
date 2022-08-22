@@ -2,27 +2,28 @@
 use crate::{
     cmd::{
         forge::{build::CoreBuildArgs, debug::DebugArgs, watch::WatchArgs},
-        Cmd,
+        Cmd, LoadConfig,
     },
     compile,
     compile::ProjectCompiler,
     suggestions, utils,
 };
+use cast::fuzz::CounterExample;
 use clap::{AppSettings, Parser};
-use ethers::solc::utils::RuntimeOrHandle;
+use ethers::{solc::utils::RuntimeOrHandle, types::U256};
 use forge::{
     decode::decode_console_logs,
-    executor::{inspector::CheatsConfig, opts::EvmOpts},
+    executor::inspector::CheatsConfig,
     gas_report::GasReport,
     result::{SuiteResult, TestKind, TestResult},
     trace::{
         identifier::{EtherscanIdentifier, LocalTraceIdentifier},
         CallTraceDecoderBuilder, TraceKind,
     },
-    MultiContractRunner, MultiContractRunnerBuilder,
+    MultiContractRunner, MultiContractRunnerBuilder, TestOptions,
 };
 use foundry_common::evm::EvmArgs;
-use foundry_config::{figment::Figment, Config};
+use foundry_config::{figment, Config};
 use regex::Regex;
 use std::{collections::BTreeMap, path::PathBuf, sync::mpsc::channel, thread, time::Duration};
 use tracing::trace;
@@ -30,9 +31,13 @@ use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 mod filter;
 pub use filter::Filter;
+use foundry_config::figment::{
+    value::{Dict, Map},
+    Metadata, Profile, Provider,
+};
 
 // Loads project's figment and merges the build cli arguments into it
-foundry_config::impl_figment_convert!(TestArgs, opts, evm_opts);
+foundry_config::merge_impl_figment_convert!(TestArgs, opts, evm_opts);
 
 #[derive(Debug, Clone, Parser)]
 #[clap(global_setting = AppSettings::DeriveDisplayOrder)]
@@ -90,6 +95,13 @@ pub struct TestArgs {
     /// List tests instead of running them
     #[clap(long, short, help_heading = "DISPLAY OPTIONS")]
     list: bool,
+
+    #[clap(
+        long,
+        help = "Set seed used to generate randomness during your fuzz runs",
+        parse(try_from_str = utils::parse_u256)
+    )]
+    pub fuzz_seed: Option<U256>,
 }
 
 impl TestArgs {
@@ -101,20 +113,6 @@ impl TestArgs {
     /// Returns the flattened [`Filter`] arguments merged with [`Config`]
     pub fn filter(&self, config: &Config) -> Filter {
         self.filter.with_merged_config(config)
-    }
-
-    /// Returns the currently configured [Config] and the extracted [EvmOpts] from that config
-    pub fn config_and_evm_opts(&self) -> eyre::Result<(Config, EvmOpts)> {
-        // merge all configs
-        let figment: Figment = self.into();
-        let evm_opts = figment.extract()?;
-        let mut config = Config::from_provider(figment).sanitized();
-
-        // merging etherscan api key into Config
-        if let Some(etherscan_api_key) = &self.etherscan_api_key {
-            config.etherscan_api_key = Some(etherscan_api_key.to_string());
-        }
-        Ok((config, evm_opts))
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
@@ -132,12 +130,31 @@ impl TestArgs {
     }
 }
 
+impl Provider for TestArgs {
+    fn metadata(&self) -> Metadata {
+        Metadata::named("Core Build Args Provider")
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        let mut dict = Dict::default();
+        if let Some(fuzz_seed) = self.fuzz_seed {
+            dict.insert("fuzz_seed".to_string(), fuzz_seed.to_string().into());
+        }
+
+        if let Some(ref etherscan_api_key) = self.etherscan_api_key {
+            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
+        }
+
+        Ok(Map::from([(Config::selected_profile(), dict)]))
+    }
+}
+
 impl Cmd for TestArgs {
     type Output = TestOutcome;
 
     fn run(self) -> eyre::Result<Self::Output> {
         trace!(target: "forge::test", "executing test command");
-        custom_run(self, true)
+        custom_run(self)
     }
 }
 
@@ -155,7 +172,7 @@ pub struct Test {
 
 impl Test {
     pub fn gas_used(&self) -> u64 {
-        self.result.kind.gas_used().gas()
+        self.result.kind.report().gas()
     }
 
     /// Returns the contract name of the artifact id
@@ -194,7 +211,7 @@ impl TestOutcome {
 
     /// Iterator over all tests and their names
     pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
-        self.results.values().flat_map(|SuiteResult { test_results, .. }| test_results.iter())
+        self.results.values().flat_map(|suite| suite.tests())
     }
 
     /// Returns an iterator over all `Test`
@@ -209,26 +226,34 @@ impl TestOutcome {
 
     /// Checks if there are any failures and failures are disallowed
     pub fn ensure_ok(&self) -> eyre::Result<()> {
-        if !self.allow_failure {
-            let failures = self.failures().count();
-            if failures > 0 {
-                println!();
-                println!("Failed tests:");
-                for (name, result) in self.failures() {
-                    short_test_result(name, result);
-                }
-                println!();
-
-                let successes = self.successes().count();
-                println!(
-                    "Encountered a total of {} failing tests, {} tests succeeded",
-                    Paint::red(failures.to_string()),
-                    Paint::green(successes.to_string())
-                );
-                std::process::exit(1);
-            }
+        let failures = self.failures().count();
+        if self.allow_failure || failures == 0 {
+            return Ok(())
         }
-        Ok(())
+
+        println!();
+        println!("Failing tests:");
+        for (suite_name, suite) in self.results.iter() {
+            let failures = suite.failures().count();
+            if failures == 0 {
+                continue
+            }
+
+            let term = if failures > 1 { "tests" } else { "test" };
+            println!("Encountered {} failing {} in {}", failures, term, suite_name);
+            for (name, result) in suite.failures() {
+                short_test_result(name, result);
+            }
+            println!();
+        }
+
+        let successes = self.successes().count();
+        println!(
+            "Encountered a total of {} failing tests, {} tests succeeded",
+            Paint::red(failures.to_string()),
+            Paint::green(successes.to_string())
+        );
+        std::process::exit(1);
     }
 
     pub fn duration(&self) -> Duration {
@@ -254,39 +279,49 @@ fn short_test_result(name: &str, result: &TestResult) {
     let status = if result.success {
         Paint::green("[PASS]".to_string())
     } else {
-        let txt = match (&result.reason, &result.counterexample) {
-            (Some(ref reason), Some(ref counterexample)) => {
-                format!("[FAIL. Reason: {reason}. Counterexample: {counterexample}]")
-            }
-            (None, Some(ref counterexample)) => {
-                format!("[FAIL. Counterexample: {counterexample}]")
-            }
-            (Some(ref reason), None) => {
-                format!("[FAIL. Reason: {reason}]")
-            }
-            (None, None) => "[FAIL]".to_string(),
-        };
+        let reason = result
+            .reason
+            .as_ref()
+            .map(|reason| format!("Reason: {reason}"))
+            .unwrap_or_else(|| "Reason: Assertion failed.".to_string());
 
-        Paint::red(txt)
+        let counterexample = result
+            .counterexample
+            .as_ref()
+            .map(|example| match example {
+                CounterExample::Single(eg) => format!(" Counterexample: {eg}]"),
+                CounterExample::Sequence(sequence) => {
+                    let mut inner_txt = String::new();
+
+                    for checkpoint in sequence {
+                        inner_txt += format!("\t\t{checkpoint}\n").as_str();
+                    }
+                    format!("]\n\t[Sequence]\n{inner_txt}\n")
+                }
+            })
+            .unwrap_or_else(|| "]".to_string());
+
+        Paint::red(format!("[FAIL. {reason}{counterexample}"))
     };
 
-    println!("{} {} {}", status, name, result.kind.gas_used());
+    println!("{} {} {}", status, name, result.kind.report());
 }
 
-pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<TestOutcome> {
+pub fn custom_run(args: TestArgs) -> eyre::Result<TestOutcome> {
     // Merge all configs
-    let (config, mut evm_opts) = args.config_and_evm_opts()?;
+    let (config, mut evm_opts) = args.load_config_and_evm_opts_emit_warnings()?;
 
-    // Setup the fuzzer
-    // TODO: Add CLI Options to modify the persistence
-    let cfg = proptest::test_runner::Config {
-        failure_persistence: None,
-        cases: config.fuzz_runs,
-        max_local_rejects: config.fuzz_max_local_rejects,
-        max_global_rejects: config.fuzz_max_global_rejects,
-        ..Default::default()
+    let test_options = TestOptions {
+        fuzz_runs: config.fuzz_runs,
+        fuzz_max_local_rejects: config.fuzz_max_local_rejects,
+        fuzz_max_global_rejects: config.fuzz_max_global_rejects,
+        fuzz_seed: config.fuzz_seed,
+        invariant_runs: config.invariant_runs,
+        invariant_depth: config.invariant_depth,
+        invariant_fail_on_revert: config.invariant_fail_on_revert,
+        invariant_call_override: config.invariant_call_override,
     };
-    let fuzzer = proptest::test_runner::TestRunner::new(cfg);
+
     let mut filter = args.filter(&config);
 
     trace!(target: "forge::test", ?filter, "using filter");
@@ -314,20 +349,21 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
     let evm_spec = utils::evm_spec(&config.evm_version);
 
     let mut runner = MultiContractRunnerBuilder::default()
-        .fuzzer(fuzzer)
         .initial_balance(evm_opts.initial_balance)
         .evm_spec(evm_spec)
         .sender(evm_opts.sender)
         .with_fork(evm_opts.get_fork(&config, env.clone()))
         .with_cheats_config(CheatsConfig::new(&config, &evm_opts))
+        .with_test_options(test_options)
         .build(project.paths.root, output, env, evm_opts)?;
 
     if args.debug.is_some() {
         filter.test_pattern = args.debug;
+
         match runner.count_filtered_tests(&filter) {
                 1 => {
                     // Run the test
-                    let results = runner.test(&filter, None, true)?;
+                    let results = runner.test(&filter, None, test_options)?;
 
                     // Get the result of the single test
                     let (id, sig, test_kind, counterexample) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
@@ -339,7 +375,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
                     // Build debugger args if this is a fuzz test
                     let sig = match test_kind {
                         TestKind::Fuzz(cases) => {
-                            if let Some(counterexample) = counterexample {
+                            if let Some(CounterExample::Single(counterexample)) = counterexample {
                                 counterexample.calldata.to_string()
                             } else {
                                 cases.cases().first().expect("no fuzz cases run").calldata.to_string()
@@ -378,7 +414,7 @@ pub fn custom_run(args: TestArgs, include_fuzz_tests: bool) -> eyre::Result<Test
             filter,
             args.json,
             args.allow_failure,
-            include_fuzz_tests,
+            test_options,
             args.gas_report,
         )
     }
@@ -411,7 +447,7 @@ fn test(
     filter: Filter,
     json: bool,
     allow_failure: bool,
-    include_fuzz_tests: bool,
+    test_options: TestOptions,
     gas_reporting: bool,
 ) -> eyre::Result<TestOutcome> {
     trace!(target: "forge::test", "running all tests");
@@ -436,7 +472,7 @@ fn test(
     }
 
     if json {
-        let results = runner.test(&filter, None, include_fuzz_tests)?;
+        let results = runner.test(&filter, None, test_options)?;
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
@@ -444,24 +480,16 @@ fn test(
         let local_identifier = LocalTraceIdentifier::new(&runner.known_contracts);
         let remote_chain_id = runner.evm_opts.get_remote_chain_id();
         // Do not re-query etherscan for contracts that you've already queried today.
-        // TODO: Make this configurable.
-        let cache_ttl = Duration::from_secs(24 * 60 * 60);
-        let etherscan_identifier = EtherscanIdentifier::new(
-            remote_chain_id,
-            config.etherscan_api_key,
-            remote_chain_id.and_then(Config::foundry_etherscan_chain_cache_dir),
-            cache_ttl,
-        );
+        let etherscan_identifier = EtherscanIdentifier::new(&config, remote_chain_id)?;
 
         // Set up test reporter channel
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
         // Run tests
-        let handle =
-            thread::spawn(move || runner.test(&filter, Some(tx), include_fuzz_tests).unwrap());
+        let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options).unwrap());
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
-        let mut gas_report = GasReport::new(config.gas_reports);
+        let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
         for (contract_name, suite_result) in rx {
             let mut tests = suite_result.test_results.clone();
             println!();
