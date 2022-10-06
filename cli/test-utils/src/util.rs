@@ -152,7 +152,7 @@ pub fn try_setup_forge_remote(
 ) -> eyre::Result<(TestProject, TestCommand)> {
     let config = config.into();
     let mut tmp = TempProject::checkout(&config.id).wrap_err("failed to checkout project")?;
-    tmp.project_mut().paths = config.path_style.paths(&tmp.root())?;
+    tmp.project_mut().paths = config.path_style.paths(tmp.root())?;
 
     let prj = TestProject::with_project(tmp);
     if config.run_build {
@@ -356,7 +356,7 @@ impl TestProject {
     /// Creates a new command that is set to use the cast executable for this project
     pub fn cast_command(&self) -> TestCommand {
         let mut cmd = self.cast_bin();
-        cmd.current_dir(&self.inner.root());
+        cmd.current_dir(self.inner.root());
         let _lock = CURRENT_DIR_LOCK.lock();
         TestCommand {
             project: self.clone(),
@@ -588,6 +588,11 @@ impl TestCommand {
         self.expect_success(output)
     }
 
+    /// Runs the command and asserts that it resulted in success
+    pub fn assert_success(&mut self) {
+        self.output();
+    }
+
     /// Executes command, applies stdin function and returns output
     pub fn execute(&mut self) -> process::Output {
         self.try_execute().unwrap()
@@ -759,7 +764,7 @@ pub trait OutputExt {
 ///
 /// This should strip everything that can vary from run to run, like elapsed time, file paths
 static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(\r|finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|installing solc version(.*?)\n|Successfully installed solc(.*?)\n|runs: \d+, μ: \d+, ~: \d+)").unwrap()
+    Regex::new(r"(\r|finished in (.*)?s|-->(.*).sol|Location(.|\n)*\.rs(.|\n)*Backtrace|Installing solc version(.*?)\n|Successfully installed solc(.*?)\n|runs: \d+, μ: \d+, ~: \d+)").unwrap()
 });
 
 impl OutputExt for process::Output {
