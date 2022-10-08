@@ -14,9 +14,9 @@
 
 Foundry consists of:
 
-- [**Forge**](./forge): Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- [**Cast**](./cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- [**Anvil**](./anvil): local Ethereum node, akin to Ganache, Hardhat Network.
+-   [**Forge**](./forge): Ethereum testing framework (like Truffle, Hardhat and DappTools).
+-   [**Cast**](./cast): Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
+-   [**Anvil**](./anvil): local Ethereum node, akin to Ganache, Hardhat Network.
 
 **Need help getting started with Foundry? Read the [📖 Foundry Book][foundry-book] (WIP)!**
 
@@ -46,12 +46,12 @@ For people that want to install from source, you can do so like below:
 git clone https://github.com/foundry-rs/foundry
 cd foundry
 # install cast + forge
-cargo install --path ./cli --bins --locked --force
+cargo install --path ./cli --profile local --bins --locked --force
 # install anvil
-cargo install --path ./anvil --locked --force
+cargo install --path ./anvil --profile local --locked --force
 ```
 
-Or via `cargo install --git https://github.com/foundry-rs/foundry --locked foundry-cli anvil`.
+Or via `cargo install --git https://github.com/foundry-rs/foundry --profile local --locked foundry-cli anvil`.
 
 ### Installing for CI in Github Action
 
@@ -77,19 +77,19 @@ You can manually download nightly releases [here](https://github.com/foundry-rs/
 
 ### Features
 
-- **Fast & flexible compilation pipeline**
-  - Automatic Solidity compiler version detection & installation (under `~/.svm`)
-  - **Incremental compilation & caching**: Only changed files are re-compiled
-  - Parallel compilation
-  - Non-standard directory structures support (e.g. [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829))
-- **Tests are written in Solidity** (like in DappTools)
-- **Fast fuzz testing** with shrinking of inputs & printing of counter-examples
-- **Fast remote RPC forking mode**, leveraging Rust's async infrastructure like tokio
-- **Flexible debug logging**
-  - DappTools-style, using `DsTest`'s emitted logs
-  - Hardhat-style, using the popular `console.sol` contract
-- **Portable (5-10MB) & easy to install** without requiring Nix or any other package manager
-- **Fast CI** with the [Foundry GitHub action][foundry-gha].
+-   **Fast & flexible compilation pipeline**
+    -   Automatic Solidity compiler version detection & installation (under `~/.svm`)
+    -   **Incremental compilation & caching**: Only changed files are re-compiled
+    -   Parallel compilation
+    -   Non-standard directory structures support (e.g. [Hardhat repos](https://twitter.com/gakonst/status/1461289225337421829))
+-   **Tests are written in Solidity** (like in DappTools)
+-   **Fast fuzz testing** with shrinking of inputs & printing of counter-examples
+-   **Fast remote RPC forking mode**, leveraging Rust's async infrastructure like tokio
+-   **Flexible debug logging**
+    -   DappTools-style, using `DsTest`'s emitted logs
+    -   Hardhat-style, using the popular `console.sol` contract
+-   **Portable (5-10MB) & easy to install** without requiring Nix or any other package manager
+-   **Fast CI** with the [Foundry GitHub action][foundry-gha].
 
 ### How Fast?
 
@@ -99,18 +99,17 @@ See the benchmarks below. More benchmarks can be found in the [v0.2.0 announceme
 
 **Testing Benchmarks**
 
-| Project                         | Forge | DappTools | Speedup |
-| ------------------------------- | ----- | --------- | ------- |
-| [maple-labs/loan][loan]         | 800ms | 4m28s     | 335x    |
-| [Rari-Capital/solmate][solmate] | 2.8s  | 6m34s     | 140x    |
-| [reflexer-labs/geb][geb]        | 0.4s  | 23s       | 57.5x   |
-| [Rari-Capital/vaults][vaults]   | 0.28s | 6.5s      | 23x     |
+| Project                            | Forge | DappTools | Speedup |
+| ---------------------------------- | ----- | --------- | ------- |
+| [transmissions11/solmate][solmate] | 2.8s  | 6m34s     | 140x    |
+| [reflexer-labs/geb][geb]           | 0.4s  | 23s       | 57.5x   |
+| [Rari-Capital/vaults][vaults]      | 0.28s | 6.5s      | 23x     |
 
 _Note: In the above benchmarks, compilation was always skipped_
 
 **Compilation Benchmarks**
 
-<img alt="Compilation benchmarks" src=".github/compilation-benchmark.png" height="420px" />
+<img alt="Compilation benchmarks" src=".github/compilation-benchmark.png" width="693px" />
 
 **Takeaway: Forge compilation is consistently faster by a factor of 1.7-11.3x, depending on the amount of caching involved.**
 
@@ -124,7 +123,7 @@ More documentation can be found in the [cast package](./cast).
 
 ### Using `foundry.toml`
 
-Foundry is designed to be very configurable. You can configure Foundry using a file called [`foundry.toml`](./config) in the root of your project, or any other parent director. See [config package](./config/README.md#all-options) for all available options.
+Foundry is designed to be very configurable. You can configure Foundry using a file called [`foundry.toml`](./config) in the root of your project, or any other parent directory. See [config package](./config/README.md#all-options) for all available options.
 
 Configuration can be arbitrarily namespaced by profiles. The default profile is named `default` (see ["Default Profile"](./config/README.md#default-profile)).
 
@@ -138,14 +137,14 @@ By default `forge config` shows the currently selected foundry profile and its v
 
 ### DappTools Compatibility
 
-You can re-use your `.dapprc` environment variabless by running `source .dapprc` beforehand using a Foundry tool.
+You can re-use your `.dapprc` environment variables by running `source .dapprc` beforehand using a Foundry tool.
 
 ### Additional Configuration
 
 You can find additional setup and configurations guides in the [Foundry Book][foundry-book]:
 
-- [Setting up VSCode][vscode-setup]
-- [Shell autocompletions][shell-setup]
+-   [Setting up VSCode][vscode-setup]
+-   [Shell autocompletions][shell-setup]
 
 ### Troubleshooting Installation
 
@@ -186,25 +185,24 @@ First, see if the answer to your question can be found in [book][foundry-book], 
 
 If the answer is not there:
 
-- Join the [support Telegram][tg-support-url] to get help, or
-- Open a [discussion](https://github.com/foundry-rs/foundry/discussions/new) with your question, or
-- Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new)
+-   Join the [support Telegram][tg-support-url] to get help, or
+-   Open a [discussion](https://github.com/foundry-rs/foundry/discussions/new) with your question, or
+-   Open an issue with [the bug](https://github.com/foundry-rs/foundry/issues/new)
 
 If you want to contribute, or follow along with contributor discussion, you can use our [main telegram](https://t.me/foundry_rs) to chat with us about the development of Foundry!
 
 ## Acknowledgements
 
-- Foundry is a clean-room rewrite of the testing framework [DappTools](https://github.com/dapphub/dapptools). None of this would have been possible without the DappHub team's work over the years.
-- [Matthias Seitz](https://twitter.com/mattsse_): Created [ethers-solc](https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/) which is the backbone of our compilation pipeline, as well as countless contributions to ethers, in particular the `abigen` macros.
-- [Rohit Narurkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use to auto-detect and manage multiple Solidity versions.
-- [Brock Elmore](https://twitter.com/brockjelmore): For extending the VM's cheatcodes and implementing [structured call tracing](https://github.com/foundry-rs/foundry/pull/192), a critical feature for debugging smart contract calls.
-- All the other [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the [ethers-rs](https://github.com/gakonst/ethers-rs) & [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.
+-   Foundry is a clean-room rewrite of the testing framework [DappTools](https://github.com/dapphub/dapptools). None of this would have been possible without the DappHub team's work over the years.
+-   [Matthias Seitz](https://twitter.com/mattsse_): Created [ethers-solc](https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/) which is the backbone of our compilation pipeline, as well as countless contributions to ethers, in particular the `abigen` macros.
+-   [Rohit Narurkar](https://twitter.com/rohitnarurkar): Created the Rust Solidity version manager [svm-rs](https://github.com/roynalnaruto/svm-rs) which we use to auto-detect and manage multiple Solidity versions.
+-   [Brock Elmore](https://twitter.com/brockjelmore): For extending the VM's cheatcodes and implementing [structured call tracing](https://github.com/foundry-rs/foundry/pull/192), a critical feature for debugging smart contract calls.
+-   All the other [contributors](https://github.com/foundry-rs/foundry/graphs/contributors) to the [ethers-rs](https://github.com/gakonst/ethers-rs) & [foundry](https://github.com/foundry-rs/foundry) repositories and chatrooms.
 
 [foundry-book]: https://book.getfoundry.sh
 [foundry-gha]: https://github.com/foundry-rs/foundry-toolchain
 [ethers-solc]: https://github.com/gakonst/ethers-rs/tree/master/ethers-solc/
-[loan]: https://github.com/maple-labs/loan
-[solmate]: https://github.com/Rari-Capital/solmate/
+[solmate]: https://github.com/transmissions11/solmate/
 [geb]: https://github.com/reflexer-labs/geb
 [vaults]: https://github.com/rari-capital/vaults
 [benchmark-post]: https://www.paradigm.xyz/2022/03/foundry-02#blazing-fast-compilation--testing

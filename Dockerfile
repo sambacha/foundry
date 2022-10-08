@@ -78,7 +78,8 @@ EXPOSE 3001/tcp
 
 STOPSIGNAL SIGQUIT
 
-ENTRYPOINT ["/bin/sh", "-c", "/usr/bin/env \"$@\"", "--"]
+RUN adduser -Du 1000 foundry
+ENTRYPOINT ["/bin/sh", "-c"]
 
 
 LABEL org.label-schema.build-date=$BUILD_DATE \

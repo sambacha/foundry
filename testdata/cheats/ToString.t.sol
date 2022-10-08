@@ -8,16 +8,15 @@ contract ToStringTest is DSTest {
     Cheats constant cheats = Cheats(HEVM_ADDRESS);
 
     function testAddressToString() public {
-        address testAddress =  0x7109709ECfa91a80626fF3989D68f67F5b1DD12D;
+        address testAddress = 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D;
         string memory stringAddress = cheats.toString(testAddress);
         assertEq("0x7109709ECfa91a80626fF3989D68f67F5b1DD12D", stringAddress);
     }
 
-
     function testBytes32ToString() public {
         bytes32 testBytes = "test";
         string memory stringBytes = cheats.toString(testBytes);
-        assertEq("test", stringBytes);
+        assertEq("0x7465737400000000000000000000000000000000000000000000000000000000", stringBytes);
     }
 
     function testBoolToString() public {

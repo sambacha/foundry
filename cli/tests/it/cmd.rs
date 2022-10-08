@@ -1,20 +1,36 @@
 //! Contains various tests for checking forge's commands
-use ethers::solc::{
-    artifacts::{BytecodeHash, Metadata},
-    ConfigurableContractArtifact,
+
+use crate::constants::*;
+use clap::CommandFactory;
+use ethers::{
+    prelude::remappings::Remapping,
+    solc::{
+        artifacts::{BytecodeHash, Metadata},
+        ConfigurableContractArtifact,
+    },
 };
+use foundry_cli::opts::forge::Opts;
 use foundry_cli_test_utils::{
     ethers_solc::PathStyle,
     forgetest, forgetest_init,
-    util::{pretty_err, read_string, remapping_str, OutputExt, TestCommand, TestProject},
+    util::{pretty_err, read_string, OutputExt, TestCommand, TestProject},
 };
 use foundry_config::{parse_with_profile, BasicConfig, Chain, Config, SolidityErrorCode};
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, path::PathBuf, str::FromStr};
 
 // tests `--help` is printed to std out
 forgetest!(print_help, |_: TestProject, mut cmd: TestCommand| {
     cmd.arg("--help");
     cmd.assert_non_empty_stdout();
+});
+
+// tests `--help` is printed to std out for all subcommands
+forgetest!(print_forge_subcommand_help, |_: TestProject, mut cmd: TestCommand| {
+    let forge = Opts::command();
+    for sub_command in forge.get_subcommands() {
+        cmd.forge_fuse().args([sub_command.get_name(), "--help"]);
+        cmd.assert_non_empty_stdout();
+    }
 });
 
 // checks that `clean` can be invoked even if out and cache don't exist
@@ -215,23 +231,29 @@ forgetest!(can_init_repo_with_config, |prj: TestProject, mut cmd: TestCommand| {
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
-// checks that init works repeatedly
-forgetest!(can_init_repo_repeatedly_with_force, |prj: TestProject, mut cmd: TestCommand| {
-    let foundry_toml = prj.root().join(Config::FILE_NAME);
-    assert!(!foundry_toml.exists());
-
+// Checks that a forge project fails to initialise if dir is already git repo and dirty
+forgetest!(can_detect_dirty_git_status_on_init, |prj: TestProject, mut cmd: TestCommand| {
+    use std::process::Command;
     prj.wipe();
 
-    cmd.arg("init").arg(prj.root());
-    cmd.assert_non_empty_stdout();
+    // initialise new git
+    Command::new("git").arg("init").current_dir(prj.root()).output().unwrap();
 
-    cmd.arg("--force");
+    std::fs::write(prj.root().join("untracked.text"), "untracked").unwrap();
 
-    for _ in 0..2 {
-        assert!(foundry_toml.exists());
-        pretty_err(&foundry_toml, fs::remove_file(&foundry_toml));
-        cmd.assert_non_empty_stdout();
-    }
+    // create nested dir and execute init in nested dir
+    let nested = prj.root().join("nested");
+    fs::create_dir_all(&nested).unwrap();
+
+    cmd.current_dir(&nested);
+    cmd.arg("init");
+    cmd.unchecked_output().stderr_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_detect_dirty_git_status_on_init.stderr"),
+    );
+
+    // ensure nothing was emitted, dir is empty
+    assert!(!nested.read_dir().map(|mut i| i.next().is_some()).unwrap_or_default());
 });
 
 // Checks that a forge project can be initialized without creating a git repository
@@ -288,14 +310,7 @@ forgetest!(can_init_vscode, |prj: TestProject, mut cmd: TestCommand| {
     let remappings = prj.root().join("remappings.txt");
     assert!(remappings.is_file());
     let content = std::fs::read_to_string(remappings).unwrap();
-    assert_eq!(
-        content,
-        format!(
-            "{}\n{}",
-            remapping_str("ds-test/", "lib/forge-std/lib/ds-test/src"),
-            remapping_str("forge-std/", "lib/forge-std/src")
-        )
-    );
+    assert_eq!(content, "ds-test/=lib/forge-std/lib/ds-test/src/\nforge-std/=lib/forge-std/src/",);
 });
 
 // checks that forge can init with template
@@ -343,7 +358,7 @@ forgetest_init!(can_clean_config, |prj: TestProject, mut cmd: TestCommand| {
     cmd.assert_non_empty_stdout();
 
     // default test contract is written in custom out directory
-    let artifact = prj.root().join("custom-out/Contract.t.sol/ContractTest.json");
+    let artifact = prj.root().join(format!("custom-out/{}", TEMPLATE_TEST_CONTRACT_ARTIFACT_JSON));
     assert!(artifact.exists());
 
     cmd.forge_fuse().arg("clean");
@@ -356,7 +371,7 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     cmd.args(["build", "--extra-output", "metadata"]);
     cmd.assert_non_empty_stdout();
 
-    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
         ethers::solc::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
@@ -364,7 +379,8 @@ forgetest_init!(can_emit_extra_output, |prj: TestProject, mut cmd: TestCommand| 
     cmd.forge_fuse().args(["build", "--extra-output-files", "metadata", "--force"]).root_arg();
     cmd.assert_non_empty_stdout();
 
-    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let metadata_path =
+        prj.paths().artifacts.join(format!("{}.metadata.json", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 });
 
@@ -373,7 +389,7 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
     cmd.args(["build", "--extra-output", "metadata", "ir-optimized", "--extra-output", "ir"]);
     cmd.assert_non_empty_stdout();
 
-    let artifact_path = prj.paths().artifacts.join("Contract.sol/Contract.json");
+    let artifact_path = prj.paths().artifacts.join(TEMPLATE_CONTRACT_ARTIFACT_JSON);
     let artifact: ConfigurableContractArtifact =
         ethers::solc::utils::read_json_file(artifact_path).unwrap();
     assert!(artifact.metadata.is_some());
@@ -392,13 +408,15 @@ forgetest_init!(can_emit_multiple_extra_output, |prj: TestProject, mut cmd: Test
         .root_arg();
     cmd.assert_non_empty_stdout();
 
-    let metadata_path = prj.paths().artifacts.join("Contract.sol/Contract.metadata.json");
+    let metadata_path =
+        prj.paths().artifacts.join(format!("{}.metadata.json", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     let _artifact: Metadata = ethers::solc::utils::read_json_file(metadata_path).unwrap();
 
-    let iropt = prj.paths().artifacts.join("Contract.sol/Contract.iropt");
+    let iropt = prj.paths().artifacts.join(format!("{}.iropt", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     std::fs::read_to_string(iropt).unwrap();
 
-    let sourcemap = prj.paths().artifacts.join("Contract.sol/Contract.sourcemap");
+    let sourcemap =
+        prj.paths().artifacts.join(format!("{}.sourcemap", TEMPLATE_CONTRACT_ARTIFACT_BASE));
     std::fs::read_to_string(sourcemap).unwrap();
 });
 
@@ -505,7 +523,7 @@ forgetest!(can_execute_inspect_command, |prj: TestProject, mut cmd: TestCommand|
     let config = Config { bytecode_hash: BytecodeHash::Ipfs, ..Default::default() };
     prj.write_config(config);
     let contract_name = "Foo";
-    let _ = prj
+    let path = prj
         .inner()
         .add_source(
             contract_name,
@@ -527,12 +545,18 @@ contract Foo {
     let ipfs_start = dynamic_bytecode.len() - (24 + 64);
     let ipfs_end = ipfs_start + 65;
     dynamic_bytecode.replace_range(ipfs_start..ipfs_end, "");
-    cmd.arg("inspect").arg(contract_name).arg("bytecode");
-    let mut output = cmd.stdout_lossy();
-    output.replace_range(ipfs_start..ipfs_end, "");
 
-    // Compare the static bytecode
-    assert_eq!(dynamic_bytecode, output);
+    let check_output = |mut output: String| {
+        output.replace_range(ipfs_start..ipfs_end, "");
+        assert_eq!(dynamic_bytecode, output);
+    };
+
+    cmd.arg("inspect").arg(contract_name).arg("bytecode");
+    check_output(cmd.stdout_lossy());
+
+    let info = format!("src/{}:{}", path.file_name().unwrap().to_string_lossy(), contract_name);
+    cmd.forge_fuse().arg("inspect").arg(info).arg("bytecode");
+    check_output(cmd.stdout_lossy());
 });
 
 // test that `forge snapshot` commands work
@@ -774,4 +798,673 @@ forgetest!(can_install_and_remove, |prj: TestProject, mut cmd: TestCommand| {
     // install again and remove via relative path
     install(&mut cmd);
     remove(&mut cmd, "lib/forge-std");
+});
+
+// test to check that package can be reinstalled after manually removing the directory
+forgetest!(can_reinstall_after_manual_remove, |prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    let libs = prj.root().join("lib");
+    let git_mod = prj.root().join(".git/modules/lib");
+    let git_mod_file = prj.root().join(".gitmodules");
+
+    let forge_std = libs.join("forge-std");
+    let forge_std_mod = git_mod.join("forge-std");
+
+    let install = |cmd: &mut TestCommand| {
+        cmd.forge_fuse().args(["install", "foundry-rs/forge-std", "--no-commit"]);
+        cmd.assert_non_empty_stdout();
+        assert!(forge_std.exists());
+        assert!(forge_std_mod.exists());
+
+        let submods = read_string(&git_mod_file);
+        assert!(submods.contains("https://github.com/foundry-rs/forge-std"));
+    };
+
+    install(&mut cmd);
+    fs::remove_dir_all(forge_std.clone()).expect("Failed to remove forge-std");
+
+    // install again
+    install(&mut cmd);
+});
+
+// test that we can repeatedly install the same dependency without changes
+forgetest!(can_install_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.git_init();
+
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]);
+    for _ in 0..3 {
+        cmd.assert_success();
+    }
+});
+
+// Tests that forge update doesn't break a working dependency by recursively updating nested
+// dependencies
+forgetest!(
+    can_update_library_with_outdated_nested_dependency,
+    |prj: TestProject, mut cmd: TestCommand| {
+        cmd.git_init();
+
+        let libs = prj.root().join("lib");
+        let git_mod = prj.root().join(".git/modules/lib");
+        let git_mod_file = prj.root().join(".gitmodules");
+
+        let package = libs.join("issue-2264-repro");
+        let package_mod = git_mod.join("issue-2264-repro");
+
+        let install = |cmd: &mut TestCommand| {
+            cmd.forge_fuse().args(["install", "foundry-rs/issue-2264-repro", "--no-commit"]);
+            cmd.assert_non_empty_stdout();
+            assert!(package.exists());
+            assert!(package_mod.exists());
+
+            let submods = read_string(&git_mod_file);
+            assert!(submods.contains("https://github.com/foundry-rs/issue-2264-repro"));
+        };
+
+        install(&mut cmd);
+        cmd.forge_fuse().args(["update", "lib/issue-2264-repro"]);
+        cmd.stdout_lossy();
+
+        prj.inner()
+            .add_source(
+                "MyTokenCopy",
+                r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.6.0;
+import "issue-2264-repro/MyToken.sol";
+contract MyTokenCopy is MyToken {
+}
+   "#,
+            )
+            .unwrap();
+
+        cmd.forge_fuse().args(["build"]);
+        let output = cmd.stdout_lossy();
+
+        assert!(output.contains("Compiler run successful",));
+    }
+);
+
+forgetest!(gas_report_all_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+    prj.inner()
+        .add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./test.sol";
+
+contract ContractOne {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function foo() public{
+        while(i<5){
+            i++;
+        }
+    }
+}
+
+contract ContractOneTest is DSTest {
+    ContractOne c1;
+
+    function setUp() public {
+        c1 = new ContractOne();
+    }
+
+    function testFoo() public {
+        c1.foo();
+    }
+}
+
+
+contract ContractTwo {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function bar() public{
+        while(i<50){
+            i++;
+        }
+    }
+}
+
+contract ContractTwoTest is DSTest {
+    ContractTwo c2;
+
+    function setUp() public {
+        c2 = new ContractTwo();
+    }
+
+    function testBar() public {
+        c2.bar();
+    }
+}
+
+contract ContractThree {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function baz() public{
+        while(i<500){
+            i++;
+        }
+    }
+}
+
+contract ContractThreeTest is DSTest {
+    ContractThree c3;
+
+    function setUp() public {
+        c3 = new ContractThree();
+    }
+
+    function testBaz() public {
+        c3.baz();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // report for all
+    prj.write_config(Config {
+        gas_reports: (vec!["*".to_string()]),
+        gas_reports_ignore: (vec![]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    cmd.forge_fuse();
+    prj.write_config(Config { gas_reports: (vec![]), ..Default::default() });
+    cmd.forge_fuse();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(second_out.contains("foo") && second_out.contains("bar") && second_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    cmd.forge_fuse();
+    prj.write_config(Config { gas_reports: (vec!["*".to_string()]), ..Default::default() });
+    cmd.forge_fuse();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec![
+            "ContractOne".to_string(),
+            "ContractTwo".to_string(),
+            "ContractThree".to_string(),
+        ]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let fourth_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(fourth_out.contains("foo") && fourth_out.contains("bar") && fourth_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+});
+
+forgetest!(gas_report_some_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+    prj.inner()
+        .add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./test.sol";
+
+contract ContractOne {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function foo() public{
+        while(i<5){
+            i++;
+        }
+    }
+}
+
+contract ContractOneTest is DSTest {
+    ContractOne c1;
+
+    function setUp() public {
+        c1 = new ContractOne();
+    }
+
+    function testFoo() public {
+        c1.foo();
+    }
+}
+
+
+contract ContractTwo {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function bar() public{
+        while(i<50){
+            i++;
+        }
+    }
+}
+
+contract ContractTwoTest is DSTest {
+    ContractTwo c2;
+
+    function setUp() public {
+        c2 = new ContractTwo();
+    }
+
+    function testBar() public {
+        c2.bar();
+    }
+}
+
+contract ContractThree {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function baz() public{
+        while(i<500){
+            i++;
+        }
+    }
+}
+
+contract ContractThreeTest is DSTest {
+    ContractThree c3;
+
+    function setUp() public {
+        c3 = new ContractThree();
+    }
+
+    function testBaz() public {
+        c3.baz();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // report for One
+    prj.write_config(Config {
+        gas_reports: (vec!["ContractOne".to_string()]),
+        gas_reports_ignore: (vec![]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(first_out.contains("foo") && !first_out.contains("bar") && !first_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // report for Two
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec!["ContractTwo".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(
+        !second_out.contains("foo") && second_out.contains("bar") && !second_out.contains("baz")
+    );
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // report for Three
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec!["ContractThree".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(!third_out.contains("foo") && !third_out.contains("bar") && third_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+});
+
+forgetest!(gas_ignore_some_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    prj.insert_ds_test();
+    prj.inner()
+        .add_source(
+            "Contracts.sol",
+            r#"
+//SPDX-license-identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./test.sol";
+
+contract ContractOne {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function foo() public{
+        while(i<5){
+            i++;
+        }
+    }
+}
+
+contract ContractOneTest is DSTest {
+    ContractOne c1;
+
+    function setUp() public {
+        c1 = new ContractOne();
+    }
+
+    function testFoo() public {
+        c1.foo();
+    }
+}
+
+
+contract ContractTwo {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function bar() public{
+        while(i<50){
+            i++;
+        }
+    }
+}
+
+contract ContractTwoTest is DSTest {
+    ContractTwo c2;
+
+    function setUp() public {
+        c2 = new ContractTwo();
+    }
+
+    function testBar() public {
+        c2.bar();
+    }
+}
+
+contract ContractThree {
+    int public i;
+
+    constructor() {
+        i = 0;
+    }
+
+    function baz() public{
+        while(i<500){
+            i++;
+        }
+    }
+}
+
+contract ContractThreeTest is DSTest {
+    ContractThree c3;
+
+    function setUp() public {
+        c3 = new ContractThree();
+    }
+
+    function testBaz() public {
+        c3.baz();
+    }
+}
+    "#,
+        )
+        .unwrap();
+
+    // ignore ContractOne
+    prj.write_config(Config {
+        gas_reports: (vec!["*".to_string()]),
+        gas_reports_ignore: (vec!["ContractOne".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let first_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(!first_out.contains("foo") && first_out.contains("bar") && first_out.contains("baz"));
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // ignore ContractTwo
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec![]),
+        gas_reports_ignore: (vec!["ContractTwo".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let second_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(
+        second_out.contains("foo") && !second_out.contains("bar") && second_out.contains("baz")
+    );
+    // cmd.arg("test").arg("--gas-report").print_output();
+
+    // ignore ContractThree
+    cmd.forge_fuse();
+    prj.write_config(Config {
+        gas_reports: (vec![
+            "ContractOne".to_string(),
+            "ContractTwo".to_string(),
+            "ContractThree".to_string(),
+        ]),
+        gas_reports_ignore: (vec!["ContractThree".to_string()]),
+        ..Default::default()
+    });
+    cmd.forge_fuse();
+    let third_out = cmd.arg("test").arg("--gas-report").stdout();
+    assert!(third_out.contains("foo") && third_out.contains("bar") && third_out.contains("baz"));
+});
+
+forgetest_init!(can_use_absolute_imports, |prj: TestProject, mut cmd: TestCommand| {
+    let remapping = prj.paths().libraries[0].join("myDepdendency");
+    let config = Config {
+        remappings: vec![Remapping::from_str(&format!("myDepdendency/={}", remapping.display()))
+            .unwrap()
+            .into()],
+        ..Default::default()
+    };
+    prj.write_config(config);
+
+    prj.inner()
+        .add_lib(
+            "myDepdendency/src/interfaces/IConfig.sol",
+            r#"
+    pragma solidity ^0.8.10;
+
+    interface IConfig {}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_lib(
+            "myDepdendency/src/Config.sol",
+            r#"
+    pragma solidity ^0.8.10;
+    import "src/interfaces/IConfig.sol";
+
+    contract Config {}
+   "#,
+        )
+        .unwrap();
+
+    prj.inner()
+        .add_source(
+            "Greeter",
+            r#"
+    pragma solidity ^0.8.10;
+    import "myDepdendency/src/Config.sol";
+
+    contract Greeter {}
+   "#,
+        )
+        .unwrap();
+
+    cmd.arg("build");
+    let stdout = cmd.stdout_lossy();
+    assert!(stdout.contains("Compiler run successful"));
+});
+
+// <https://github.com/foundry-rs/foundry/issues/3440>
+forgetest_init!(
+    can_use_absolute_imports_from_test_and_script,
+    |prj: TestProject, mut cmd: TestCommand| {
+        prj.inner()
+            .add_script(
+                "IMyScript.sol",
+                r#"
+    pragma solidity ^0.8.10;
+
+    interface IMyScript {}
+   "#,
+            )
+            .unwrap();
+
+        prj.inner()
+            .add_script(
+                "MyScript.sol",
+                r#"
+    pragma solidity ^0.8.10;
+    import "script/IMyScript.sol";
+
+    contract MyScript is IMyScript {}
+   "#,
+            )
+            .unwrap();
+
+        prj.inner()
+            .add_test(
+                "IMyTest.sol",
+                r#"
+    pragma solidity ^0.8.10;
+
+    interface IMyTest {}
+   "#,
+            )
+            .unwrap();
+
+        prj.inner()
+            .add_test(
+                "MyTest.sol",
+                r#"
+    pragma solidity ^0.8.10;
+    import "test/IMyTest.sol";
+
+    contract MyTest is IMyTest {}
+   "#,
+            )
+            .unwrap();
+
+        cmd.arg("build");
+        let stdout = cmd.stdout_lossy();
+        assert!(stdout.contains("Compiler run successful"));
+    }
+);
+
+// checks forge bind works correctly on the default project
+forgetest_init!(can_bind, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.arg("bind");
+    cmd.assert_non_empty_stdout();
+});
+
+// checks missing dependencies are auto installed
+forgetest_init!(can_install_missing_deps_test, |prj: TestProject, mut cmd: TestCommand| {
+    // wipe forge-std
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.arg("test");
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
+    assert!(output.contains("[PASS]"), "{}", output);
+});
+
+// checks missing dependencies are auto installed
+forgetest_init!(can_install_missing_deps_build, |prj: TestProject, mut cmd: TestCommand| {
+    // wipe forge-std
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.arg("build");
+
+    let output = cmd.stdout_lossy();
+    assert!(output.contains("Missing dependencies found. Installing now"), "{}", output);
+    assert!(output.contains("Compiler run successful"), "{}", output);
+});
+
+// checks that extra output works
+forgetest_init!(can_build_skip_contracts, |prj: TestProject, mut cmd: TestCommand| {
+    // explicitly set to run with 0.8.17 for consistent output
+    let config = Config { solc: Some("0.8.17".into()), ..Default::default() };
+    prj.write_config(config);
+
+    // only builds the single template contract `src/*`
+    cmd.args(["build", "--skip", "tests", "--skip", "scripts"]);
+
+    cmd.unchecked_output().stdout_matches_path(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/can_build_skip_contracts.stdout"),
+    );
+    // re-run command
+    let out = cmd.stdout();
+
+    // unchanged
+    assert!(out.trim().contains("No files changed, compilation skipped"), "{}", out);
+});
+
+// checks that build --sizes includes all contracts even if unchanged
+forgetest_init!(can_build_sizes_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["build", "--sizes"]);
+    let out = cmd.stdout();
+
+    // contains: Counter    ┆ 0.247     ┆ 24.329
+    assert!(out.contains(TEMPLATE_CONTRACT));
+
+    // get the entire table
+    let table = out.split("Compiler run successful").nth(1).unwrap().trim();
+
+    let unchanged = cmd.stdout();
+    assert!(unchanged.contains(&table), "{}", table);
+});
+
+// checks that build --names includes all contracts even if unchanged
+forgetest_init!(can_build_names_repeatedly, |_prj: TestProject, mut cmd: TestCommand| {
+    cmd.args(["build", "--names"]);
+    let out = cmd.stdout();
+
+    assert!(out.contains(TEMPLATE_CONTRACT));
+
+    // get the entire list
+    let list = out.split("Compiler run successful").nth(1).unwrap().trim();
+
+    let unchanged = cmd.stdout();
+    assert!(unchanged.contains(&list), "{}", list);
 });

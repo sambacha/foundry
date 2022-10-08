@@ -1,17 +1,3 @@
-/// Cheatcodes related to the execution environment.
-mod env;
-pub use env::{Prank, RecordAccess};
-/// Assertion helpers (such as `expectEmit`)
-mod expect;
-pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
-/// Cheatcodes that interact with the external environment (FFI etc.)
-mod ext;
-/// Cheatcodes that configure the fuzzer
-mod fuzz;
-/// Utility cheatcodes (`sign` etc.)
-mod util;
-pub use util::{DEFAULT_CREATE2_DEPLOYER, MISSING_CREATE2_DEPLOYER};
-
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert},
@@ -19,19 +5,24 @@ use self::{
 };
 use crate::{
     abi::HEVMCalls,
-    executor::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    error::SolError,
+    executor::{
+        backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
+        HARDHAT_CONSOLE_ADDRESS,
+    },
 };
 use bytes::Bytes;
 use ethers::{
     abi::{AbiDecode, AbiEncode, RawLog},
+    signers::LocalWallet,
     types::{
         transaction::eip2718::TypedTransaction, Address, NameOrAddress, TransactionRequest, H256,
         U256,
     },
 };
 use revm::{
-    opcode, BlockEnv, CallInputs, CreateInputs, Database, EVMData, Gas, Inspector, Interpreter,
-    Return,
+    opcode, BlockEnv, CallInputs, CreateInputs, EVMData, Gas, Inspector, Interpreter, Return,
+    TransactTo,
 };
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -41,13 +32,47 @@ use std::{
     sync::Arc,
 };
 
+/// Cheatcodes related to the execution environment.
+mod env;
+pub use env::{Prank, RecordAccess};
+/// Assertion helpers (such as `expectEmit`)
+mod expect;
+pub use expect::{ExpectedCallData, ExpectedEmit, ExpectedRevert, MockCallDataContext};
+
+/// Cheatcodes that interact with the external environment (FFI etc.)
+mod ext;
+/// Fork related cheatcodes
+mod fork;
+/// Cheatcodes that configure the fuzzer
+mod fuzz;
+/// Snapshot related cheatcodes
+mod snapshot;
+/// Utility cheatcodes (`sign` etc.)
+pub mod util;
+pub use util::DEFAULT_CREATE2_DEPLOYER;
+
 mod config;
+use crate::executor::{backend::RevertDiagnostic, inspector::utils::get_create_address};
 pub use config::CheatsConfig;
 
 /// An inspector that handles calls to various cheatcodes, each with their own behavior.
 ///
 /// Cheatcodes can be called by contracts during execution to modify the VM environment, such as
 /// mocking addresses, signatures and altering call reverts.
+///
+/// Executing cheatcodes can be very powerful. Most cheatcodes are limited to evm internals, but
+/// there are also cheatcodes like `ffi` which can execute arbitrary commands or `writeFile` and
+/// `readFile` which can manipulate files of the filesystem. Therefore, several restrictions are
+/// implemented for these cheatcodes:
+///
+///    - `ffi`, and file cheatcodes are _always_ opt-in (via foundry config) and never enabled by
+///      default: all respective cheatcode handlers implement the appropriate checks
+///    - File cheatcodes require explicit permissions which paths are allowed for which operation,
+///      see `Config.fs_permission`
+///    - Only permitted accounts are allowed to execute cheatcodes in forking mode, this ensures no
+///      contract deployed on the live network is able to execute cheatcodes by simply calling the
+///      cheatcode address: by default, the caller, test contract and newly deployed contracts are
+///      allowed to execute cheatcodes
 #[derive(Clone, Debug, Default)]
 pub struct Cheatcodes {
     /// The block environment
@@ -65,14 +90,23 @@ pub struct Cheatcodes {
     /// Address labels
     pub labels: BTreeMap<Address, String>,
 
+    /// Rememebered private keys
+    pub script_wallets: Vec<LocalWallet>,
+
     /// Prank information
     pub prank: Option<Prank>,
 
     /// Expected revert information
     pub expected_revert: Option<ExpectedRevert>,
 
+    /// Additional diagnostic for reverts
+    pub fork_revert_diagnostic: Option<RevertDiagnostic>,
+
     /// Recorded storage reads and writes
     pub accesses: Option<RecordAccess>,
+
+    /// Recorded logs
+    pub recorded_logs: Option<RecordedLogs>,
 
     /// Mocked calls
     pub mocked_calls: BTreeMap<Address, BTreeMap<MockCallDataContext, Bytes>>,
@@ -97,33 +131,27 @@ pub struct Cheatcodes {
 
     /// Test-scoped context holding data that needs to be reset every test run
     pub context: Context,
-}
 
-#[derive(Debug, Default)]
-pub struct Context {
-    //// Buffered readers for files opened for reading (path => BufReader mapping)
-    pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
-}
-
-/// Every time we clone `Context`, we want it to be empty
-impl Clone for Context {
-    fn clone(&self) -> Self {
-        Default::default()
-    }
+    // Commit FS changes such as file creations, writes and deletes.
+    // Used to prevent duplicate changes file executing non-committing calls.
+    pub fs_commit: bool,
 }
 
 impl Cheatcodes {
+    /// Creates a new `Cheatcodes` based on the given settings
     pub fn new(block: BlockEnv, gas_price: U256, config: CheatsConfig) -> Self {
         Self {
             corrected_nonce: false,
             block: Some(block),
             gas_price: Some(gas_price),
             config: Arc::new(config),
+            fs_commit: true,
             ..Default::default()
         }
     }
 
-    fn apply_cheatcode<DB: Database>(
+    #[tracing::instrument(skip_all, name = "applying cheatcode")]
+    fn apply_cheatcode<DB: DatabaseExt>(
         &mut self,
         data: &mut EVMData<'_, DB>,
         caller: Address,
@@ -132,20 +160,123 @@ impl Cheatcodes {
         // Decode the cheatcode call
         let decoded = HEVMCalls::decode(&call.input).map_err(|err| err.to_string().encode())?;
 
+        // ensure the caller is allowed to execute cheatcodes, but only if the backend is in forking
+        // mode
+        data.db.ensure_cheatcode_access_forking_mode(caller).map_err(|err| err.encode_string())?;
+
         // TODO: Log the opcode for the debugger
         env::apply(self, data, caller, &decoded)
+            .transpose()
             .or_else(|| util::apply(self, data, &decoded))
             .or_else(|| expect::apply(self, data, &decoded))
             .or_else(|| fuzz::apply(data, &decoded))
             .or_else(|| ext::apply(self, self.config.ffi, &decoded))
+            .or_else(|| snapshot::apply(self, data, &decoded))
+            .or_else(|| fork::apply(self, data, &decoded))
             .ok_or_else(|| "Cheatcode was unhandled. This is a bug.".to_string().encode())?
+    }
+
+    /// Determines the address of the contract and marks it as allowed
+    ///
+    /// There may be cheatcodes in the constructor of the new contract, in order to allow them
+    /// automatically we need to determine the new address
+    fn allow_cheatcodes_on_create<DB: DatabaseExt>(
+        &self,
+        data: &mut EVMData<'_, DB>,
+        inputs: &CreateInputs,
+    ) {
+        let old_nonce = data
+            .journaled_state
+            .state
+            .get(&inputs.caller)
+            .map(|acc| acc.info.nonce)
+            .unwrap_or_default();
+        let created_address = get_create_address(inputs, old_nonce);
+
+        if data.journaled_state.depth > 1 && !data.db.has_cheatcode_access(inputs.caller) {
+            // we only grant cheat code access for new contracts if the caller also has
+            // cheatcode access and the new contract is created in top most call
+            return
+        }
+
+        data.db.allow_cheatcode_access(created_address);
     }
 }
 
 impl<DB> Inspector<DB> for Cheatcodes
 where
-    DB: Database,
+    DB: DatabaseExt,
 {
+    fn initialize_interp(
+        &mut self,
+        _: &mut Interpreter,
+        data: &mut EVMData<'_, DB>,
+        _: bool,
+    ) -> Return {
+        // When the first interpreter is initialized we've circumvented the balance and gas checks,
+        // so we apply our actual block data with the correct fees and all.
+        if let Some(block) = self.block.take() {
+            data.env.block = block;
+        }
+        if let Some(gas_price) = self.gas_price.take() {
+            data.env.tx.gas_price = gas_price;
+        }
+
+        Return::Continue
+    }
+
+    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
+        // Record writes and reads if `record` has been called
+        if let Some(storage_accesses) = &mut self.accesses {
+            match interpreter.contract.bytecode.bytecode()[interpreter.program_counter()] {
+                opcode::SLOAD => {
+                    let key = try_or_continue!(interpreter.stack().peek(0));
+                    storage_accesses
+                        .reads
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
+                }
+                opcode::SSTORE => {
+                    let key = try_or_continue!(interpreter.stack().peek(0));
+
+                    // An SSTORE does an SLOAD internally
+                    storage_accesses
+                        .reads
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
+                    storage_accesses
+                        .writes
+                        .entry(interpreter.contract().address)
+                        .or_insert_with(Vec::new)
+                        .push(key);
+                }
+                _ => (),
+            }
+        }
+
+        Return::Continue
+    }
+
+    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
+        // Match logs if `expectEmit` has been called
+        if !self.expected_emits.is_empty() {
+            handle_expect_emit(
+                self,
+                RawLog { topics: topics.to_vec(), data: data.to_vec() },
+                address,
+            );
+        }
+
+        // Stores this log if `recordLogs` has been called
+        if let Some(storage_recorded_logs) = &mut self.recorded_logs {
+            storage_recorded_logs
+                .entries
+                .push(RawLog { topics: topics.to_vec(), data: data.to_vec() });
+        }
+    }
+
     fn call(
         &mut self,
         data: &mut EVMData<'_, DB>,
@@ -188,11 +319,11 @@ where
 
             // Apply our prank
             if let Some(prank) = &self.prank {
-                if data.subroutine.depth() >= prank.depth &&
+                if data.journaled_state.depth() >= prank.depth &&
                     call.context.caller == prank.prank_caller
                 {
                     // At the target depth we set `msg.sender`
-                    if data.subroutine.depth() == prank.depth {
+                    if data.journaled_state.depth() == prank.depth {
                         call.context.caller = prank.new_caller;
                         call.transfer.source = prank.new_caller;
                     }
@@ -210,7 +341,7 @@ where
                 //
                 // We do this because any subsequent contract calls *must* exist on chain and
                 // we only want to grab *this* call, not internal ones
-                if data.subroutine.depth() == broadcast.depth &&
+                if data.journaled_state.depth() == broadcast.depth &&
                     call.context.caller == broadcast.original_caller
                 {
                     // At the target depth we set `msg.sender` & tx.origin.
@@ -223,8 +354,14 @@ where
                     // into 1559, in the cli package, relatively easily once we
                     // know the target chain supports EIP-1559.
                     if !is_static {
-                        data.subroutine.load_account(broadcast.origin, data.db);
-                        let account = data.subroutine.state().get_mut(&broadcast.origin).unwrap();
+                        if let Err(err) =
+                            data.journaled_state.load_account(broadcast.origin, data.db)
+                        {
+                            return (Return::Revert, Gas::new(call.gas_limit), err.encode_string())
+                        }
+
+                        let account =
+                            data.journaled_state.state().get_mut(&broadcast.origin).unwrap();
 
                         self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
                             TransactionRequest {
@@ -247,7 +384,7 @@ where
                             .to_string()
                             .encode()
                             .into()
-                        )
+                        );
                     }
                 }
             }
@@ -255,69 +392,6 @@ where
             (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
         } else {
             (Return::Continue, Gas::new(call.gas_limit), Bytes::new())
-        }
-    }
-
-    fn initialize_interp(
-        &mut self,
-        _: &mut Interpreter,
-        data: &mut EVMData<'_, DB>,
-        _: bool,
-    ) -> Return {
-        // When the first interpreter is initialized we've circumvented the balance and gas checks,
-        // so we apply our actual block data with the correct fees and all.
-        if let Some(block) = self.block.take() {
-            data.env.block = block;
-        }
-        if let Some(gas_price) = self.gas_price.take() {
-            data.env.tx.gas_price = gas_price;
-        }
-
-        Return::Continue
-    }
-
-    fn step(&mut self, interpreter: &mut Interpreter, _: &mut EVMData<'_, DB>, _: bool) -> Return {
-        // Record writes and reads if `record` has been called
-        if let Some(storage_accesses) = &mut self.accesses {
-            match interpreter.contract.code[interpreter.program_counter()] {
-                opcode::SLOAD => {
-                    let key = try_or_continue!(interpreter.stack().peek(0));
-                    storage_accesses
-                        .reads
-                        .entry(interpreter.contract().address)
-                        .or_insert_with(Vec::new)
-                        .push(key);
-                }
-                opcode::SSTORE => {
-                    let key = try_or_continue!(interpreter.stack().peek(0));
-
-                    // An SSTORE does an SLOAD internally
-                    storage_accesses
-                        .reads
-                        .entry(interpreter.contract().address)
-                        .or_insert_with(Vec::new)
-                        .push(key);
-                    storage_accesses
-                        .writes
-                        .entry(interpreter.contract().address)
-                        .or_insert_with(Vec::new)
-                        .push(key);
-                }
-                _ => (),
-            }
-        }
-
-        Return::Continue
-    }
-
-    fn log(&mut self, _: &mut EVMData<'_, DB>, address: &Address, topics: &[H256], data: &Bytes) {
-        // Match logs if `expectEmit` has been called
-        if !self.expected_emits.is_empty() {
-            handle_expect_emit(
-                self,
-                RawLog { topics: topics.to_vec(), data: data.to_vec() },
-                address,
-            );
         }
     }
 
@@ -336,7 +410,7 @@ where
 
         // Clean up pranks
         if let Some(prank) = &self.prank {
-            if data.subroutine.depth() == prank.depth {
+            if data.journaled_state.depth() == prank.depth {
                 data.env.tx.caller = prank.prank_origin;
             }
             if prank.single_call {
@@ -353,9 +427,14 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.subroutine.depth() <= expected_revert.depth {
+            if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match handle_expect_revert(false, &expected_revert.reason, status, retdata) {
+                return match handle_expect_revert(
+                    false,
+                    expected_revert.reason.as_ref(),
+                    status,
+                    retdata,
+                ) {
                     Err(retdata) => (Return::Revert, remaining_gas, retdata),
                     Ok((_, retdata)) => (Return::Return, remaining_gas, retdata),
                 }
@@ -366,7 +445,7 @@ where
         if !self
             .expected_emits
             .iter()
-            .filter(|expected| expected.depth == data.subroutine.depth())
+            .filter(|expected| expected.depth == data.journaled_state.depth())
             .all(|expected| expected.found)
         {
             return (
@@ -380,7 +459,7 @@ where
         }
 
         // If the depth is 0, then this is the root call terminating
-        if data.subroutine.depth() == 0 {
+        if data.journaled_state.depth() == 0 {
             // Handle expected calls that were not fulfilled
             if let Some((address, expecteds)) =
                 self.expected_calls.iter().find(|(_, expecteds)| !expecteds.is_empty())
@@ -412,6 +491,30 @@ where
             }
         }
 
+        // if there's a revert and a previous call was diagnosed as fork related revert then we can
+        // return a better error here
+        if status == Return::Revert {
+            if let Some(err) = self.fork_revert_diagnostic.take() {
+                return (status, remaining_gas, err.to_error_msg(self).encode().into())
+            }
+        }
+
+        // this will ensure we don't have false positives when trying to diagnose reverts in fork
+        // mode
+        let _ = self.fork_revert_diagnostic.take();
+
+        // try to diagnose reverts in multi-fork mode where a call is made to an address that does
+        // not exist
+        if let TransactTo::Call(test_contract) = data.env.tx.transact_to {
+            // if a call to a different contract than the original test contract returned with
+            // `Stop` we check if the contract actually exists on the active fork
+            if data.db.is_forked_mode() && status == Return::Stop && call.contract != test_contract
+            {
+                self.fork_revert_diagnostic =
+                    data.db.diagnose_revert(call.contract, &data.journaled_state);
+            }
+        }
+
         (status, remaining_gas, retdata)
     }
 
@@ -420,11 +523,14 @@ where
         data: &mut EVMData<'_, DB>,
         call: &mut CreateInputs,
     ) -> (Return, Option<Address>, Gas, Bytes) {
+        // allow cheatcodes from the address of the new contract
+        self.allow_cheatcodes_on_create(data, call);
+
         // Apply our prank
         if let Some(prank) = &self.prank {
-            if data.subroutine.depth() >= prank.depth && call.caller == prank.prank_caller {
+            if data.journaled_state.depth() >= prank.depth && call.caller == prank.prank_caller {
                 // At the target depth we set `msg.sender`
-                if data.subroutine.depth() == prank.depth {
+                if data.journaled_state.depth() == prank.depth {
                     call.caller = prank.new_caller;
                 }
 
@@ -437,13 +543,25 @@ where
 
         // Apply our broadcast
         if let Some(broadcast) = &self.broadcast {
-            if data.subroutine.depth() == broadcast.depth &&
+            if data.journaled_state.depth() == broadcast.depth &&
                 call.caller == broadcast.original_caller
             {
-                data.subroutine.load_account(broadcast.origin, data.db);
+                if let Err(err) = data.journaled_state.load_account(broadcast.origin, data.db) {
+                    return (Return::Revert, None, Gas::new(call.gas_limit), err.encode_string())
+                }
 
                 let (bytecode, to, nonce) =
-                    process_create(broadcast.origin, call.init_code.clone(), data, call);
+                    match process_create(broadcast.origin, call.init_code.clone(), data, call) {
+                        Ok(val) => val,
+                        Err(err) => {
+                            return (
+                                Return::Revert,
+                                None,
+                                Gas::new(call.gas_limit),
+                                err.encode_string(),
+                            )
+                        }
+                    };
 
                 self.broadcastable_transactions.push_back(TypedTransaction::Legacy(
                     TransactionRequest {
@@ -472,7 +590,7 @@ where
     ) -> (Return, Option<Address>, Gas, Bytes) {
         // Clean up pranks
         if let Some(prank) = &self.prank {
-            if data.subroutine.depth() == prank.depth {
+            if data.journaled_state.depth() == prank.depth {
                 data.env.tx.caller = prank.prank_origin;
             }
             if prank.single_call {
@@ -489,9 +607,14 @@ where
 
         // Handle expected reverts
         if let Some(expected_revert) = &self.expected_revert {
-            if data.subroutine.depth() <= expected_revert.depth {
+            if data.journaled_state.depth() <= expected_revert.depth {
                 let expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-                return match handle_expect_revert(true, &expected_revert.reason, status, retdata) {
+                return match handle_expect_revert(
+                    true,
+                    expected_revert.reason.as_ref(),
+                    status,
+                    retdata,
+                ) {
                     Err(retdata) => (Return::Revert, None, remaining_gas, retdata),
                     Ok((address, retdata)) => (Return::Return, address, remaining_gas, retdata),
                 }
@@ -499,5 +622,19 @@ where
         }
 
         (status, address, remaining_gas, retdata)
+    }
+}
+
+/// Contains additional, test specific resources that should be kept for the duration of the test
+#[derive(Debug, Default)]
+pub struct Context {
+    //// Buffered readers for files opened for reading (path => BufReader mapping)
+    pub opened_read_files: HashMap<PathBuf, BufReader<File>>,
+}
+
+/// Every time we clone `Context`, we want it to be empty
+impl Clone for Context {
+    fn clone(&self) -> Self {
+        Default::default()
     }
 }
