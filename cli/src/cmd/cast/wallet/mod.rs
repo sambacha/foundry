@@ -1,5 +1,7 @@
 //! cast wallet subcommand
 
+pub mod vanity;
+
 use crate::{
     cmd::{cast::wallet::vanity::VanityArgs, Cmd},
     opts::{EthereumOpts, Wallet, WalletType},
@@ -11,10 +13,9 @@ use ethers::{
     signers::{LocalWallet, Signer},
     types::{Address, Chain, Signature},
 };
-use std::str::FromStr;
+use eyre::Context;
 
-pub mod vanity;
-
+/// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
     #[clap(name = "new", visible_alias = "n", about = "Create a new random keypair.")]
@@ -132,6 +133,7 @@ impl WalletSubcommands {
                     WalletType::Ledger(signer) => signer.address(),
                     WalletType::Local(signer) => signer.address(),
                     WalletType::Trezor(signer) => signer.address(),
+                    WalletType::Aws(signer) => signer.address(),
                 };
                 println!("{}", SimpleCast::to_checksum_address(&addr));
             }
@@ -150,15 +152,16 @@ impl WalletSubcommands {
                     WalletType::Ledger(wallet) => wallet.signer().sign_message(&message).await?,
                     WalletType::Local(wallet) => wallet.signer().sign_message(&message).await?,
                     WalletType::Trezor(wallet) => wallet.signer().sign_message(&message).await?,
+                    WalletType::Aws(wallet) => wallet.signer().sign_message(&message).await?,
                 };
                 println!("Signature: 0x{sig}");
             }
             WalletSubcommands::Verify { message, signature, address } => {
-                let pubkey = Address::from_str(&address).expect("invalid pubkey provided");
-                let signature = Signature::from_str(&signature)?;
+                let pubkey: Address = address.parse().wrap_err("Invalid address")?;
+                let signature: Signature = signature.parse().wrap_err("Invalid signature")?;
                 match signature.verify(message, pubkey) {
                     Ok(_) => {
-                        println!("Validation success. Address {address} signed this message.")
+                        println!("Validation succeeded. Address {address} signed this message.")
                     }
                     Err(_) => {
                         println!("Validation failed. Address {address} did not sign this message.")

@@ -3,7 +3,7 @@
 //! This module holds the [ChiselCommand] enum, which contains all builtin commands that
 //! can be executed within the REPL.
 
-use crate::prelude::ChiselDisptacher;
+use crate::prelude::ChiselDispatcher;
 use std::{error::Error, str::FromStr};
 use strum::EnumIter;
 
@@ -12,6 +12,8 @@ use strum::EnumIter;
 pub enum ChiselCommand {
     /// Print helpful information about chisel
     Help,
+    /// Quit the REPL
+    Quit,
     /// Clear the current session source
     Clear,
     /// Print the generated source contract
@@ -45,6 +47,10 @@ pub enum ChiselCommand {
     Fetch,
     /// Executes a shell command
     Exec,
+    /// Display the raw value of a variable's stack allocation.
+    RawStack,
+    /// Open the current session in an editor
+    Edit,
 }
 
 /// Attempt to convert a string slice to a `ChiselCommand`
@@ -54,6 +60,7 @@ impl FromStr for ChiselCommand {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_ref() {
             "help" | "h" => Ok(ChiselCommand::Help),
+            "quit" | "q" => Ok(ChiselCommand::Quit),
             "clear" | "c" => Ok(ChiselCommand::Clear),
             "source" | "so" => Ok(ChiselCommand::Source),
             "save" | "s" => Ok(ChiselCommand::Save),
@@ -67,7 +74,9 @@ impl FromStr for ChiselCommand {
             "export" | "ex" => Ok(ChiselCommand::Export),
             "fetch" | "fe" => Ok(ChiselCommand::Fetch),
             "exec" | "e" => Ok(ChiselCommand::Exec),
-            _ => Err(ChiselDisptacher::make_error(format!(
+            "rawstack" | "rs" => Ok(ChiselCommand::RawStack),
+            "edit" => Ok(ChiselCommand::Edit),
+            _ => Err(ChiselDispatcher::make_error(format!(
                 "Unknown command \"{s}\"! See available commands with `!help`.",
             ))
             .into()),
@@ -109,6 +118,7 @@ impl From<ChiselCommand> for CmdDescriptor {
         match cmd {
             // General
             ChiselCommand::Help => (&["help", "h"], "Display all commands", CmdCategory::General),
+            ChiselCommand::Quit => (&["quit", "q"], "Quit Chisel", CmdCategory::General),
             ChiselCommand::Exec => (&["exec <command> [args]", "e <command> [args]"], "Execute a shell command and print the output", CmdCategory::General),
             // Session
             ChiselCommand::Clear => (&["clear", "c"], "Clear current session source", CmdCategory::Session),
@@ -125,6 +135,8 @@ impl From<ChiselCommand> for CmdDescriptor {
             // Debug
             ChiselCommand::MemDump => (&["memdump", "md"], "Dump the raw memory of the current state", CmdCategory::Debug),
             ChiselCommand::StackDump => (&["stackdump", "sd"], "Dump the raw stack of the current state", CmdCategory::Debug),
+            ChiselCommand::Edit => (&["edit"], "Open the current session in an editor", CmdCategory::Session),
+            ChiselCommand::RawStack => (&["rawstack <var>", "rs <var>"], "Display the raw value of a variable's stack allocation. For variables that are > 32 bytes in length, this will display their memory pointer.", CmdCategory::Debug),
         }
     }
 }

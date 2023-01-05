@@ -19,8 +19,13 @@ use ethers_core::{
 use ethers_etherscan::{errors::EtherscanError, Client};
 use ethers_providers::{Middleware, PendingTransaction};
 use eyre::{Context, Result};
-use foundry_common::{abi::encode_args, fmt::*};
+use foundry_common::{abi::encode_args, fmt::*, TransactionReceiptWithRevertReason};
 pub use foundry_evm::*;
+pub use rusoto_core::{
+    credential::ChainProvider as AwsChainProvider, region::Region as AwsRegion,
+    request::HttpClient as AwsHttpClient, Client as AwsClient,
+};
+pub use rusoto_kms::KmsClient;
 use rustc_hex::{FromHexIter, ToHex};
 use std::{path::PathBuf, str::FromStr};
 pub use tx::TxBuilder;
@@ -93,26 +98,29 @@ where
         let (tx, func) = builder_output;
         let res = self.provider.call(&tx, block).await?;
 
-        // decode args into tokens
-        let func = func.expect("no valid function signature was provided.");
-        let decoded = match func.decode_output(res.as_ref()) {
-            Ok(decoded) => decoded,
-            Err(err) => {
-                // ensure the address is a contract
-                if res.is_empty() {
-                    // check that the recipient is a contract that can be called
-                    if let Some(NameOrAddress::Address(addr)) = tx.to() {
-                        let code = self.provider.get_code(*addr, block).await?;
-                        if code.is_empty() {
-                            eyre::bail!("Contract {:?} does not exist", addr)
+        let mut decoded = vec![];
+
+        if let Some(func) = func {
+            // decode args into tokens
+            decoded = match func.decode_output(res.as_ref()) {
+                Ok(decoded) => decoded,
+                Err(err) => {
+                    // ensure the address is a contract
+                    if res.is_empty() {
+                        // check that the recipient is a contract that can be called
+                        if let Some(NameOrAddress::Address(addr)) = tx.to() {
+                            let code = self.provider.get_code(*addr, block).await?;
+                            if code.is_empty() {
+                                eyre::bail!("Contract {:?} does not exist", addr)
+                            }
                         }
                     }
+                    return Err(err).wrap_err(
+                        "could not decode output. did you specify the wrong function return data type perhaps?"
+                    );
                 }
-                return Err(err).wrap_err(
-                    "could not decode output. did you specify the wrong function return data type perhaps?"
-                )
-            }
-        };
+            };
+        }
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
             format!("{res}\n")
@@ -381,7 +389,8 @@ where
     pub async fn age<T: Into<BlockId>>(&self, block: T) -> Result<String> {
         let timestamp_str =
             Cast::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
-        let datetime = NaiveDateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0);
+        let datetime =
+            NaiveDateTime::from_timestamp_opt(timestamp_str.parse::<i64>().unwrap(), 0).unwrap();
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
@@ -607,24 +616,29 @@ where
     ) -> Result<String> {
         let tx_hash = H256::from_str(&tx_hash).wrap_err("invalid tx hash")?;
 
-        let receipt = match self.provider.get_transaction_receipt(tx_hash).await? {
-            Some(r) => r,
-            None => {
-                // if the async flag is provided, immediately exit if no tx is found, otherwise try
-                // to poll for it
-                if cast_async {
-                    eyre::bail!("tx not found: {:?}", tx_hash)
-                } else {
-                    let tx = PendingTransaction::new(tx_hash, self.provider.provider());
-                    tx.confirmations(confs).await?.ok_or_else(|| {
-                        eyre::eyre!(
-                            "tx not found, might have been dropped from mempool: {:?}",
-                            tx_hash
-                        )
-                    })?
+        let mut receipt: TransactionReceiptWithRevertReason =
+            match self.provider.get_transaction_receipt(tx_hash).await? {
+                Some(r) => r,
+                None => {
+                    // if the async flag is provided, immediately exit if no tx is found, otherwise
+                    // try to poll for it
+                    if cast_async {
+                        eyre::bail!("tx not found: {:?}", tx_hash)
+                    } else {
+                        let tx = PendingTransaction::new(tx_hash, self.provider.provider());
+                        tx.confirmations(confs).await?.ok_or_else(|| {
+                            eyre::eyre!(
+                                "tx not found, might have been dropped from mempool: {:?}",
+                                tx_hash
+                            )
+                        })?
+                    }
                 }
             }
-        };
+            .into();
+
+        // Allow to fail silently
+        let _ = receipt.update_revert_reason(&self.provider).await;
 
         Ok(if let Some(ref field) = field {
             get_pretty_tx_receipt_attr(&receipt, field)
@@ -661,6 +675,35 @@ where
     {
         let res = self.provider.provider().request::<T, serde_json::Value>(method, params).await?;
         Ok(serde_json::to_string(&res)?)
+    }
+
+    /// Returns the slot
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use cast::Cast;
+    /// use ethers_providers::{Provider, Http};
+    /// use ethers_core::types::{Address, H256};
+    /// use std::{str::FromStr, convert::TryFrom};
+    ///
+    /// # async fn foo() -> eyre::Result<()> {
+    /// let provider = Provider::<Http>::try_from("http://localhost:8545")?;
+    /// let cast = Cast::new(provider);
+    /// let addr = Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?;
+    /// let slot = H256::zero();
+    /// let storage = cast.storage(addr, slot, None).await?;
+    /// println!("{}", storage);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn storage<T: Into<NameOrAddress> + Send + Sync>(
+        &self,
+        from: T,
+        slot: H256,
+        block: Option<BlockId>,
+    ) -> Result<String> {
+        Ok(format!("{:?}", self.provider.get_storage_at(from, slot, block).await?))
     }
 }
 

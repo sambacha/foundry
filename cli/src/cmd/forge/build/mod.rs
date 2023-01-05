@@ -32,7 +32,7 @@ pub use self::paths::ProjectPathsArgs;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 
-/// All `forge build` related arguments
+/// CLI arguments for `forge build`.
 ///
 /// CLI arguments take the highest precedence in the Config/Figment hierarchy.
 /// In order to override them in the foundry `Config` they need to be merged into an existing
@@ -54,6 +54,7 @@ foundry_config::merge_impl_figment_convert!(BuildArgs, args);
 /// Some arguments are marked as `#[serde(skip)]` and require manual processing in
 /// `figment::Provider` implementation
 #[derive(Debug, Clone, Parser, Serialize, Default)]
+#[clap(next_help_heading = "Build options", about = None)] // override doc
 pub struct BuildArgs {
     #[clap(flatten)]
     #[serde(flatten)]
@@ -71,11 +72,11 @@ pub struct BuildArgs {
         long,
         num_args(1..),
         action = ArgAction::Append,
-        help = "Skip building whose names contain FILTER. `test` and `script` are aliases for `.t.sol` and `.s.sol`. (this flag can be used multiple times)")]
+        help = "Skip building whose names contain SKIP. `test` and `script` are aliases for `.t.sol` and `.s.sol`. (this flag can be used multiple times)")]
     #[serde(skip)]
     pub skip: Option<Vec<SkipBuildFilter>>,
 
-    #[clap(flatten, next_help_heading = "WATCH OPTIONS")]
+    #[clap(flatten)]
     #[serde(skip)]
     pub watch: WatchArgs,
 }

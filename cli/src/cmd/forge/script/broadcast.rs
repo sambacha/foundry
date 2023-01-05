@@ -252,6 +252,7 @@ impl ScriptArgs {
                 WalletType::Local(signer) => self.broadcast(signer, tx).await,
                 WalletType::Ledger(signer) => self.broadcast(signer, tx).await,
                 WalletType::Trezor(signer) => self.broadcast(signer, tx).await,
+                WalletType::Aws(signer) => self.broadcast(signer, tx).await,
             },
         }
     }
@@ -468,7 +469,25 @@ impl ScriptArgs {
 
                 if has_different_gas_calc(provider_info.chain) {
                     trace!("estimating with different gas calculation");
-                    self.estimate_gas(typed_tx, &provider_info.provider).await?;
+                    let gas = *typed_tx.gas().expect("gas is set by simulation.");
+
+                    // We are trying to show the user an estimation of the total gas usage.
+                    //
+                    // However, some transactions might depend on previous ones. For
+                    // example, tx1 might deploy a contract that tx2 uses. That
+                    // will result in the following `estimate_gas` call to fail,
+                    // since tx1 hasn't been broadcasted yet.
+                    //
+                    // Not exiting here will not be a problem when actually broadcasting, because
+                    // for chains where `has_different_gas_calc` returns true,
+                    // we await each transaction before broadcasting the next
+                    // one.
+                    if let Err(err) = self.estimate_gas(typed_tx, &provider_info.provider).await {
+                        trace!("gas estimation failed: {err}");
+
+                        // Restore gas value, since `estimate_gas` will remove it.
+                        typed_tx.set_gas(gas);
+                    }
                 }
 
                 let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(U256::zero());

@@ -2,7 +2,7 @@ use clap::Parser;
 use ethers::{
     middleware::SignerMiddleware,
     prelude::Signer,
-    signers::{coins_bip39::English, Ledger, LocalWallet, MnemonicBuilder, Trezor},
+    signers::{coins_bip39::English, AwsSigner, Ledger, LocalWallet, MnemonicBuilder, Trezor},
     types::Address,
 };
 use eyre::{bail, eyre, Result, WrapErr};
@@ -34,20 +34,22 @@ The wallet options can either be:
 4. Keystore (via file path)
 5. Private Key (cleartext in CLI)
 6. Private Key (interactively via secure prompt)
+7. AWS KMS
 "#
 )]
+#[clap(next_help_heading = "Wallet options")]
 pub struct Wallet {
     #[clap(
         long,
         short,
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Open an interactive prompt to enter your private key."
     )]
     pub interactive: bool,
 
     #[clap(
         long = "private-key",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the provided private key.",
         value_name = "RAW_PRIVATE_KEY",
         value_parser = foundry_common::clap_helpers::strip_0x_prefix
@@ -57,7 +59,7 @@ pub struct Wallet {
     #[clap(
         long = "mnemonic",
         alias = "mnemonic-path",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the mnemonic phrase of mnemonic file at the specified path.",
         value_name = "PATH"
     )]
@@ -65,7 +67,7 @@ pub struct Wallet {
 
     #[clap(
         long = "mnemonic-passphrase",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use a BIP39 passphrase for the mnemonic.",
         value_name = "PASSPHRASE"
     )]
@@ -74,7 +76,7 @@ pub struct Wallet {
     #[clap(
         long = "mnemonic-derivation-path",
         alias = "hd-path",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "The wallet derivation path. Works with both --mnemonic-path and hardware wallets.",
         value_name = "PATH"
     )]
@@ -83,7 +85,7 @@ pub struct Wallet {
     #[clap(
         long = "mnemonic-index",
         conflicts_with = "hd_path",
-        help_heading = "WALLET OPTIONS - RAW",
+        help_heading = "Wallet options - raw",
         help = "Use the private key from the given mnemonic index. Used with --mnemonic-path.",
         default_value = "0",
         value_name = "INDEX"
@@ -93,7 +95,7 @@ pub struct Wallet {
     #[clap(
         env = "ETH_KEYSTORE",
         long = "keystore",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help_heading = "Wallet options - keystore",
         help = "Use the keystore in the given folder or file.",
         value_name = "PATH"
     )]
@@ -101,7 +103,7 @@ pub struct Wallet {
 
     #[clap(
         long = "password",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help_heading = "Wallet options - keystore",
         help = "The keystore password. Used with --keystore.",
         requires = "keystore_path",
         value_name = "PASSWORD"
@@ -111,7 +113,7 @@ pub struct Wallet {
     #[clap(
         env = "ETH_PASSWORD",
         long = "password-file",
-        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help_heading = "Wallet options - keystore",
         help = "The keystore password file path. Used with --keystore.",
         requires = "keystore_path",
         value_name = "PASSWORD_FILE"
@@ -121,7 +123,7 @@ pub struct Wallet {
     #[clap(
         short,
         long = "ledger",
-        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
+        help_heading = "Wallet options - hardware wallet",
         help = "Use a Ledger hardware wallet."
     )]
     pub ledger: bool,
@@ -129,16 +131,23 @@ pub struct Wallet {
     #[clap(
         short,
         long = "trezor",
-        help_heading = "WALLET OPTIONS - HARDWARE WALLET",
+        help_heading = "Wallet options - hardware wallet",
         help = "Use a Trezor hardware wallet."
     )]
     pub trezor: bool,
 
     #[clap(
+        long = "aws",
+        help_heading = "WALLET OPTIONS - KEYSTORE",
+        help = "Use AWS Key Management Service"
+    )]
+    pub aws: bool,
+
+    #[clap(
         env = "ETH_FROM",
         short,
         long = "from",
-        help_heading = "WALLET OPTIONS - REMOTE",
+        help_heading = "Wallet options - remote",
         help = "The sender account.",
         value_name = "ADDRESS"
     )]
@@ -299,7 +308,7 @@ pub trait WalletTrait {
                 let path = self.find_keystore_file(path)?;
                 Some(
                     LocalWallet::decrypt_keystore(&path, self.password_from_file(password_file)?)
-                        .wrap_err_with(|| format!("Failed to decrypt keystore {path:?}"))?,
+                        .wrap_err_with(|| format!("Failed to decrypt keystore {path:?} with password file {password_file:?}"))?,
                 )
             }
             (Some(path), None, None) => {
@@ -333,6 +342,7 @@ pub enum WalletType {
     Local(SignerClient<LocalWallet>),
     Ledger(SignerClient<Ledger>),
     Trezor(SignerClient<Trezor>),
+    Aws(SignerClient<AwsSigner>),
 }
 
 impl From<SignerClient<Ledger>> for WalletType {
@@ -353,12 +363,19 @@ impl From<SignerClient<LocalWallet>> for WalletType {
     }
 }
 
+impl From<SignerClient<AwsSigner>> for WalletType {
+    fn from(wallet: SignerClient<AwsSigner>) -> WalletType {
+        WalletType::Aws(wallet)
+    }
+}
+
 impl WalletType {
     pub fn chain_id(&self) -> u64 {
         match self {
             WalletType::Local(inner) => inner.signer().chain_id(),
             WalletType::Ledger(inner) => inner.signer().chain_id(),
             WalletType::Trezor(inner) => inner.signer().chain_id(),
+            WalletType::Aws(inner) => inner.signer().chain_id(),
         }
     }
 }
@@ -403,6 +420,7 @@ mod tests {
             mnemonic_passphrase: None,
             ledger: false,
             trezor: false,
+            aws: false,
             hd_path: None,
             mnemonic_index: 0,
         };
