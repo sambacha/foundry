@@ -1,20 +1,20 @@
 // cast send subcommands
-use crate::opts::{cast::parse_name_or_address, EthereumOpts, TransactionOpts, WalletType};
+use crate::opts::{EthereumOpts, TransactionOpts, WalletType};
 use cast::{Cast, TxBuilder};
 use clap::Parser;
 use ethers::{providers::Middleware, types::NameOrAddress};
 use foundry_common::try_get_http_provider;
 use foundry_config::{Chain, Config};
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
 pub struct SendTxArgs {
     #[clap(
-            help = "The destination of the transaction. If not provided, you must use cast send --create.",
-             value_parser = parse_name_or_address,
-            value_name = "TO"
-        )]
+        help = "The destination of the transaction. If not provided, you must use cast send --create.",
+        value_parser = NameOrAddress::from_str,
+        value_name = "TO",
+    )]
     to: Option<NameOrAddress>,
     #[clap(help = "The signature of the function to call.", value_name = "SIG")]
     sig: Option<String>,

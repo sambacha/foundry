@@ -64,6 +64,9 @@ pub use crate::fs_permissions::FsPermissions;
 pub mod error;
 pub use error::SolidityErrorCode;
 
+pub mod doc;
+pub use doc::DocConfig;
+
 mod warning;
 pub use warning::*;
 
@@ -302,6 +305,9 @@ pub struct Config {
     /// Disables storage caching entirely. This overrides any settings made in
     /// `rpc_storage_caching`
     pub no_storage_caching: bool,
+    /// Disables rate limiting entirely. This overrides any settings made in
+    /// `compute_units_per_second`
+    pub no_rpc_rate_limit: bool,
     /// Multiple rpc endpoints and their aliases
     #[serde(default, skip_serializing_if = "RpcEndpoints::is_empty")]
     pub rpc_endpoints: RpcEndpoints,
@@ -333,6 +339,8 @@ pub struct Config {
     pub build_info_path: Option<PathBuf>,
     /// Configuration for `forge fmt`
     pub fmt: FormatterConfig,
+    /// Configuration for `forge doc`
+    pub doc: DocConfig,
     /// Configures the permissions of cheat codes that touch the file system.
     ///
     /// This includes what operations can be executed (read, write)
@@ -384,7 +392,7 @@ impl Config {
 
     /// Standalone sections in the config which get integrated into the selected profile
     pub const STANDALONE_SECTIONS: &'static [&'static str] =
-        &["rpc_endpoints", "etherscan", "fmt", "fuzz", "invariant"];
+        &["rpc_endpoints", "etherscan", "fmt", "doc", "fuzz", "invariant"];
 
     /// File name of config toml file
     pub const FILE_NAME: &'static str = "foundry.toml";
@@ -758,12 +766,35 @@ impl Config {
     /// ```
     pub fn get_rpc_url(&self) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
         let maybe_alias = self.eth_rpc_url.as_ref().or(self.etherscan_api_key.as_ref())?;
-        let mut endpoints = self.rpc_endpoints.clone().resolved();
-        if let Some(alias) = endpoints.remove(maybe_alias) {
-            Some(alias.map(Cow::Owned))
+        if let Some(alias) = self.get_rpc_url_with_alias(maybe_alias) {
+            Some(alias)
         } else {
             Some(Ok(Cow::Borrowed(self.eth_rpc_url.as_deref()?)))
         }
+    }
+
+    /// Resolves the given alias to a matching rpc url
+    ///
+    /// Returns:
+    ///    - the matching, resolved url of  `rpc_endpoints` if `maybe_alias` is an alias
+    ///    - None otherwise
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// 
+    /// use foundry_config::Config;
+    /// # fn t() {
+    ///     let config = Config::with_root("./");
+    ///     let rpc_url = config.get_rpc_url_with_alias("mainnet").unwrap().unwrap();
+    /// # }
+    /// ```
+    pub fn get_rpc_url_with_alias(
+        &self,
+        maybe_alias: &str,
+    ) -> Option<Result<Cow<str>, UnresolvedEnvVarError>> {
+        let mut endpoints = self.rpc_endpoints.clone().resolved();
+        Some(endpoints.remove(maybe_alias)?.map(Cow::Owned))
     }
 
     /// Returns the configured rpc, or the fallback url
@@ -1733,6 +1764,7 @@ impl Default for Config {
             rpc_endpoints: Default::default(),
             etherscan: Default::default(),
             no_storage_caching: false,
+            no_rpc_rate_limit: false,
             bytecode_hash: BytecodeHash::Ipfs,
             cbor_metadata: true,
             revert_strings: None,
@@ -1740,6 +1772,7 @@ impl Default for Config {
             build_info: false,
             build_info_path: None,
             fmt: Default::default(),
+            doc: Default::default(),
             __non_exhaustive: (),
             __warnings: vec![],
         }
@@ -3231,6 +3264,7 @@ mod tests {
                 memory_limit = 33554432
                 names = false
                 no_storage_caching = false
+                no_rpc_rate_limit = false
                 offline = false
                 optimizer = true
                 optimizer_runs = 200
@@ -3835,7 +3869,11 @@ mod tests {
                         ModelCheckerTarget::Assert,
                         ModelCheckerTarget::OutOfBounds
                     ]),
-                    timeout: Some(10000)
+                    timeout: Some(10000),
+                    invariants: None,
+                    show_unproved: None,
+                    div_mod_with_slacks: None,
+                    solvers: None,
                 })
             );
 
@@ -3891,7 +3929,11 @@ mod tests {
                         ModelCheckerTarget::Assert,
                         ModelCheckerTarget::OutOfBounds
                     ]),
-                    timeout: Some(10000)
+                    timeout: Some(10000),
+                    invariants: None,
+                    show_unproved: None,
+                    div_mod_with_slacks: None,
+                    solvers: None,
                 })
             );
 

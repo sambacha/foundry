@@ -172,7 +172,7 @@ pub(crate) use p_println;
 /// to not be able to configure the colors. It would also mess up the JSON output.
 pub fn load_dotenv() {
     let load = |p: &Path| {
-        dotenv::from_path(p.join(".env")).ok();
+        dotenvy::from_path(p.join(".env")).ok();
     };
 
     // we only want the .env file of the cwd and project root
@@ -251,7 +251,7 @@ impl CommandUtils for Command {
     #[track_caller]
     fn exec(&mut self) -> eyre::Result<Output> {
         let output = self.output()?;
-        if !&output.status.success() {
+        if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             eyre::bail!("{}", stderr.trim())
         }
