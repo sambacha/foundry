@@ -41,20 +41,23 @@ opt-level = 3
 [profile.local]
 inherits = "dev"
 opt-level = 3
+split-debuginfo = 'unpacked'
 # Set this to 1 or 2 to get more useful backtraces
-debug = 0
+debug = 2
 panic = 'unwind'
 # better recompile times
 incremental = true
 codegen-units = 16
 
+# RUSTFLAGS='-C link-arg=-s' cargo build --release
+
 [profile.release]
 # Optimize for binary size, but keep loop vectorization
 opt-level = "s"
 # Performance optimizations
-lto = "fat"
+lto = "thin"
 debug = 0
-strip = true
+strip = "debuginfo"
 panic = "abort"
 codegen-units = 1
 
