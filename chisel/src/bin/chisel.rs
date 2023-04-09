@@ -3,7 +3,10 @@
 //! This module contains the core readline loop for the Chisel CLI as well as the
 //! executable's `main` function.
 
-use chisel::prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper};
+use chisel::{
+    history::chisel_history_file,
+    prelude::{ChiselCommand, ChiselDispatcher, DispatchResult, SolidityHelper},
+};
 use clap::Parser;
 use foundry_cli::cmd::{forge::build::BuildArgs, LoadConfig};
 use foundry_common::evm::EvmArgs;
@@ -14,7 +17,7 @@ use foundry_config::{
     },
     Config,
 };
-use rustyline::{error::ReadlineError, Editor};
+use rustyline::{config::Configurer, error::ReadlineError, Editor};
 use yansi::Paint;
 
 // Loads project's figment and merges the build cli arguments into it
@@ -24,7 +27,7 @@ foundry_config::merge_impl_figment_convert!(ChiselParser, opts, evm_opts);
 pub(crate) const VERSION_MESSAGE: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (",
-    env!("VERGEN_GIT_SHA_SHORT"),
+    env!("VERGEN_GIT_SHA"),
     " ",
     env!("VERGEN_BUILD_TIMESTAMP"),
     ")"
@@ -59,15 +62,16 @@ pub enum ChiselParserSub {
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    #[cfg(windows)]
+    if !Paint::enable_windows_ascii() {
+        Paint::disable()
+    }
+
     // Parse command args
     let args = ChiselParser::parse();
 
     // Keeps track of whether or not an interrupt was the last input
     let mut interrupt = false;
-
-    // Create a new rustyline Editor
-    let mut rl = Editor::<SolidityHelper>::new()?;
-    rl.set_helper(Some(SolidityHelper));
 
     // Load configuration
     let (config, evm_opts) = args.load_config_and_evm_opts()?;
@@ -127,6 +131,18 @@ async fn main() -> eyre::Result<()> {
         None => { /* No chisel subcommand present; Continue */ }
     }
 
+    // Create a new rustyline Editor
+    let mut rl = Editor::<SolidityHelper, _>::new()?;
+    rl.set_helper(Some(SolidityHelper::default()));
+
+    // automatically add lines to history
+    rl.set_auto_add_history(true);
+
+    // load history
+    if let Some(chisel_history) = chisel_history_file() {
+        let _ = rl.load_history(&chisel_history);
+    }
+
     // Print welcome header
     println!("Welcome to Chisel! Type `{}` to show available commands.", Paint::green("!help"));
 
@@ -135,18 +151,16 @@ async fn main() -> eyre::Result<()> {
         // Get the prompt from the dispatcher
         // Variable based on status of the last entry
         let prompt = dispatcher.get_prompt();
+        rl.helper_mut().unwrap().set_errored(dispatcher.errored);
 
         // Read the next line
-        let next_string = rl.readline(prompt.as_str());
+        let next_string = rl.readline(prompt.as_ref());
 
         // Try to read the string
         match next_string {
             Ok(line) => {
                 // Clear interrupt flag
                 interrupt = false;
-
-                // Add line to history
-                rl.add_history_entry(&line);
 
                 // Dispatch and match results
                 match dispatcher.dispatch(&line).await {
@@ -177,6 +191,10 @@ async fn main() -> eyre::Result<()> {
                 break
             }
         }
+    }
+
+    if let Some(chisel_history) = chisel_history_file() {
+        let _ = rl.save_history(&chisel_history);
     }
 
     Ok(())

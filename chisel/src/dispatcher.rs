@@ -7,7 +7,7 @@ use crate::prelude::{
     ChiselCommand, ChiselResult, ChiselSession, CmdCategory, CmdDescriptor, SessionSourceConfig,
     SolidityHelper,
 };
-use ethers::{abi::ParamType, contract::Lazy, types::H160, utils::hex};
+use ethers::{abi::ParamType, contract::Lazy, types::Address, utils::hex};
 use forge::{
     decode::decode_console_logs,
     trace::{
@@ -21,12 +21,14 @@ use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use solang_parser::diagnostics::Diagnostic;
-use std::{error::Error, io::Write, path::PathBuf, process::Command, str::FromStr};
+use std::{borrow::Cow, error::Error, io::Write, path::PathBuf, process::Command};
 use strum::IntoEnumIterator;
 use yansi::Paint;
 
-/// Prompt arrow slice
+/// Prompt arrow character
 pub static PROMPT_ARROW: char = '➜';
+static DEFAULT_PROMPT: &str = "➜ ";
+
 /// Command leader character
 pub static COMMAND_LEADER: char = '!';
 /// Chisel character
@@ -121,17 +123,21 @@ impl ChiselDispatcher {
         ChiselSession::new(config).map(|session| Self { errored: false, session })
     }
 
-    /// Returns the prompt given the last input's error status
-    pub fn get_prompt(&self) -> String {
-        format!(
-            "{}{} ",
-            self.session
-                .id
-                .as_ref()
-                .map(|id| format!("({}: {}) ", Paint::cyan("ID"), Paint::yellow(id)))
-                .unwrap_or_default(),
-            if self.errored { Paint::red(PROMPT_ARROW) } else { Paint::green(PROMPT_ARROW) }
-        )
+    /// Returns the prompt based on the current status of the Dispatcher
+    pub fn get_prompt(&self) -> Cow<'static, str> {
+        match self.session.id.as_deref() {
+            // `(ID: {id}) ➜ `
+            Some(id) => {
+                let mut prompt = String::with_capacity(DEFAULT_PROMPT.len() + id.len() + 7);
+                prompt.push_str("(ID: ");
+                prompt.push_str(id);
+                prompt.push_str(") ");
+                prompt.push_str(DEFAULT_PROMPT);
+                Cow::Owned(prompt)
+            }
+            // `➜ `
+            None => Cow::Borrowed(DEFAULT_PROMPT),
+        }
     }
 
     /// Dispatches a [ChiselCommand]
@@ -802,8 +808,8 @@ impl ChiselDispatcher {
             // Convert the match to a string slice
             let match_str = m.as_str();
             // We can always safely unwrap here due to the regex matching.
-            let addr = H160::from_str(match_str).unwrap();
-            // Replace all occurances of the address with a checksummed version
+            let addr: Address = match_str.parse().expect("Valid address regex");
+            // Replace all occurrences of the address with a checksummed version
             heap_input = heap_input.replace(match_str, &ethers::utils::to_checksum(&addr, None));
         });
         // Replace the old input with the formatted input.
