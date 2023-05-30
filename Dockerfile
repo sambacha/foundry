@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 
-FROM alpine:3.16 as build-environment
+FROM alpine:3.17@sha256:124c7d2707904eea7431fffe91522a01e5a861a624ee31d03372cc1d138a3126 as build-environment
 
 ARG TARGETARCH
 WORKDIR /opt
@@ -27,16 +27,16 @@ RUN --mount=type=cache,target=/root/.cargo/registry --mount=type=cache,target=/r
     && strip out/chisel \
     && strip out/anvil;
 
-FROM docker.io/frolvlad/alpine-glibc:alpine-3.16_glibc-2.34 as foundry-client
+FROM docker.io/frolvlad/alpine-glibc:alpine-3.17_glibc-2.34 as foundry-client
 
 RUN apk add --no-cache linux-headers git
+
+RUN addgroup -g 10001 -S foundry && adduser -u 10000 -S -G foundry -h /home/foundry foundry
 
 COPY --from=build-environment /opt/foundry/out/forge /usr/local/bin/forge
 COPY --from=build-environment /opt/foundry/out/cast /usr/local/bin/cast
 COPY --from=build-environment /opt/foundry/out/anvil /usr/local/bin/anvil
 COPY --from=build-environment /opt/foundry/out/chisel /usr/local/bin/chisel
-
-RUN adduser -Du 1000 foundry
 
 ENTRYPOINT ["/bin/sh", "-c"]
 
