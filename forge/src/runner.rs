@@ -11,7 +11,7 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     TestFunctionExt,
 };
-use foundry_config::FuzzConfig;
+use foundry_config::{FuzzConfig, InvariantConfig};
 use foundry_evm::{
     decode::decode_console_logs,
     executor::{CallResult, DeployResult, EvmError, ExecutionErr, Executor},
@@ -26,15 +26,18 @@ use foundry_evm::{
 };
 use proptest::test_runner::{TestError, TestRunner};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use std::{collections::BTreeMap, time::Instant};
+use std::{
+    collections::{BTreeMap, HashMap},
+    time::Instant,
+};
 use tracing::{error, trace};
 
 /// A type that executes all tests of a contract
 #[derive(Debug, Clone)]
 pub struct ContractRunner<'a> {
+    pub name: &'a str,
     /// The executor used by the runner.
     pub executor: Executor,
-
     /// Library contracts to be deployed before the test contract
     pub predeploy_libs: &'a [Bytes],
     /// The deployed contract's code
@@ -53,6 +56,7 @@ pub struct ContractRunner<'a> {
 impl<'a> ContractRunner<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        name: &'a str,
         executor: Executor,
         contract: &'a Abi,
         code: Bytes,
@@ -62,6 +66,7 @@ impl<'a> ContractRunner<'a> {
         predeploy_libs: &'a [Bytes],
     ) -> Self {
         Self {
+            name,
             executor,
             contract,
             code,
@@ -226,6 +231,8 @@ impl<'a> ContractRunner<'a> {
                         traces: vec![],
                         coverage: None,
                         labeled_addresses: BTreeMap::new(),
+                        // TODO-f: get the breakpoints here
+                        breakpoints: Default::default(),
                     },
                 )]
                 .into(),
@@ -260,6 +267,7 @@ impl<'a> ContractRunner<'a> {
                         traces: setup.traces,
                         coverage: None,
                         labeled_addresses: setup.labeled_addresses,
+                        breakpoints: Default::default(),
                     },
                 )]
                 .into(),
@@ -282,12 +290,16 @@ impl<'a> ContractRunner<'a> {
                     .par_iter()
                     .flat_map(|(func, should_fail)| {
                         if func.is_fuzz_test() {
+                            let fn_name = &func.name;
+                            let runner = test_options.fuzz_runner(self.name, fn_name);
+                            let fuzz_config = test_options.fuzz_config(self.name, fn_name);
+
                             self.run_fuzz_test(
                                 func,
                                 *should_fail,
-                                test_options.fuzzer(),
+                                runner,
                                 setup.clone(),
-                                test_options.fuzz,
+                                *fuzz_config,
                             )
                         } else {
                             self.clone().run_test(func, *should_fail, setup.clone())
@@ -300,6 +312,7 @@ impl<'a> ContractRunner<'a> {
 
         if has_invariants {
             let identified_contracts = load_contracts(setup.traces.clone(), known_contracts);
+
             let functions: Vec<&Function> = self
                 .contract
                 .functions()
@@ -308,14 +321,26 @@ impl<'a> ContractRunner<'a> {
                 })
                 .collect();
 
-            let results = self.run_invariant_test(
-                test_options.invariant_fuzzer(),
-                setup,
-                test_options,
-                functions.clone(),
-                known_contracts,
-                identified_contracts,
-            )?;
+            let mut results: Vec<TestResult> = vec![];
+
+            for func in functions.iter() {
+                let fn_name = &func.name;
+                let runner = test_options.invariant_runner(self.name, fn_name);
+                let invariant_config = test_options.invariant_config(self.name, fn_name);
+
+                let invariant_results = self.run_invariant_test(
+                    runner,
+                    setup.clone(),
+                    *invariant_config,
+                    vec![func],
+                    known_contracts,
+                    identified_contracts.clone(),
+                )?;
+
+                for test_result in invariant_results {
+                    results.push(test_result);
+                }
+            }
 
             results.into_iter().zip(functions.iter()).for_each(|(result, function)| {
                 match result.kind {
@@ -358,51 +383,78 @@ impl<'a> ContractRunner<'a> {
 
         // Run unit test
         let start = Instant::now();
-        let (reverted, reason, gas, stipend, execution_traces, coverage, state_changeset) =
-            match self.executor.execute_test::<(), _, _>(
-                self.sender,
-                address,
-                func.clone(),
-                (),
-                0.into(),
-                self.errors,
-            ) {
-                Ok(CallResult {
+        let (
+            reverted,
+            reason,
+            gas,
+            stipend,
+            execution_traces,
+            coverage,
+            state_changeset,
+            breakpoints,
+        ) = match self.executor.execute_test::<(), _, _>(
+            self.sender,
+            address,
+            func.clone(),
+            (),
+            0.into(),
+            self.errors,
+        ) {
+            Ok(CallResult {
+                reverted,
+                gas_used: gas,
+                stipend,
+                logs: execution_logs,
+                traces: execution_trace,
+                coverage,
+                labels: new_labels,
+                state_changeset,
+                breakpoints,
+                ..
+            }) => {
+                labeled_addresses.extend(new_labels);
+                logs.extend(execution_logs);
+                (
                     reverted,
+                    None,
+                    gas,
+                    stipend,
+                    execution_trace,
+                    coverage,
+                    state_changeset,
+                    breakpoints,
+                )
+            }
+            Err(EvmError::Execution(err)) => {
+                let ExecutionErr {
+                    reverted,
+                    reason,
                     gas_used: gas,
                     stipend,
                     logs: execution_logs,
                     traces: execution_trace,
-                    coverage,
                     labels: new_labels,
                     state_changeset,
                     ..
-                }) => {
-                    labeled_addresses.extend(new_labels);
-                    logs.extend(execution_logs);
-                    (reverted, None, gas, stipend, execution_trace, coverage, state_changeset)
-                }
-                Err(EvmError::Execution(err)) => {
-                    let ExecutionErr {
-                        reverted,
-                        reason,
-                        gas_used: gas,
-                        stipend,
-                        logs: execution_logs,
-                        traces: execution_trace,
-                        labels: new_labels,
-                        state_changeset,
-                        ..
-                    } = *err;
-                    labeled_addresses.extend(new_labels);
-                    logs.extend(execution_logs);
-                    (reverted, Some(reason), gas, stipend, execution_trace, None, state_changeset)
-                }
-                Err(err) => {
-                    error!(?err);
-                    return Err(err.into())
-                }
-            };
+                } = *err;
+                labeled_addresses.extend(new_labels);
+                logs.extend(execution_logs);
+                (
+                    reverted,
+                    Some(reason),
+                    gas,
+                    stipend,
+                    execution_trace,
+                    None,
+                    state_changeset,
+                    HashMap::new(),
+                )
+            }
+            Err(err) => {
+                error!(?err);
+                return Err(err.into())
+            }
+        };
         traces.extend(execution_traces.map(|traces| (TraceKind::Execution, traces)).into_iter());
 
         let success = self.executor.is_success(
@@ -429,6 +481,7 @@ impl<'a> ContractRunner<'a> {
             traces,
             coverage,
             labeled_addresses,
+            breakpoints,
         })
     }
 
@@ -437,7 +490,7 @@ impl<'a> ContractRunner<'a> {
         &mut self,
         runner: TestRunner,
         setup: TestSetup,
-        test_options: TestOptions,
+        invariant_config: InvariantConfig,
         functions: Vec<&Function>,
         known_contracts: Option<&ContractsByArtifact>,
         identified_contracts: ContractsByAddress,
@@ -450,7 +503,7 @@ impl<'a> ContractRunner<'a> {
         let mut evm = InvariantExecutor::new(
             &mut self.executor,
             runner,
-            test_options.invariant,
+            invariant_config,
             &identified_contracts,
             project_contracts,
         );
@@ -523,6 +576,7 @@ impl<'a> ContractRunner<'a> {
                         coverage: None, // todo?
                         traces,
                         labeled_addresses: labeled_addresses.clone(),
+                        breakpoints: Default::default(),
                     })
                 })
                 .collect::<Result<Vec<TestResult>>>()
@@ -579,6 +633,7 @@ impl<'a> ContractRunner<'a> {
             traces,
             coverage: result.coverage,
             labeled_addresses,
+            breakpoints: Default::default(),
         })
     }
 }
