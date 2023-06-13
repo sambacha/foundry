@@ -187,7 +187,7 @@ impl TestArgs {
             match runner.count_filtered_tests(&filter) {
                 1 => {
                     // Run the test
-                    let results = runner.test(&filter, None, test_options)?;
+                    let results = runner.test(&filter, None, test_options);
 
                     // Get the result of the single test
                     let (id, sig, test_kind, counterexample, breakpoints) = results.iter().map(|(id, SuiteResult{ test_results, .. })| {
@@ -510,7 +510,7 @@ fn test(
     }
 
     if json {
-        let results = runner.test(&filter, None, test_options)?;
+        let results = runner.test(&filter, None, test_options);
         println!("{}", serde_json::to_string(&results)?);
         Ok(TestOutcome::new(results, allow_failure))
     } else {
@@ -524,7 +524,7 @@ fn test(
         let (tx, rx) = channel::<(String, SuiteResult)>();
 
         // Run tests
-        let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options).unwrap());
+        let handle = thread::spawn(move || runner.test(&filter, Some(tx), test_options));
 
         let mut results: BTreeMap<String, SuiteResult> = BTreeMap::new();
         let mut gas_report = GasReport::new(config.gas_reports, config.gas_reports_ignore);
@@ -532,6 +532,8 @@ fn test(
             SignaturesIdentifier::new(Config::foundry_cache_dir(), config.offline)?;
 
         'outer: for (contract_name, suite_result) in rx {
+            results.insert(contract_name.clone(), suite_result.clone());
+
             let mut tests = suite_result.test_results.clone();
             println!();
             for warning in suite_result.warnings.iter() {
@@ -617,12 +619,9 @@ fn test(
                     }
                 }
             }
-            let block_outcome = TestOutcome::new(
-                [(contract_name.clone(), suite_result.clone())].into(),
-                allow_failure,
-            );
+            let block_outcome =
+                TestOutcome::new([(contract_name, suite_result)].into(), allow_failure);
             println!("{}", block_outcome.summary());
-            results.insert(contract_name, suite_result);
         }
 
         if gas_reporting {
