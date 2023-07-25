@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity >=0.8.0;
 
-interface Cheats {
+interface Vm {
     // Possible caller modes for readCallers()
     enum CallerMode {
         None,
@@ -179,6 +179,9 @@ interface Cheats {
 
     // Sets an address' code, (who, newCode)
     function etch(address, bytes calldata) external;
+
+    // Skips a test.
+    function skip(bool) external;
 
     // Expects an error on next call
     function expectRevert() external;
@@ -578,6 +581,9 @@ interface Cheats {
     function writeJson(string calldata, string calldata) external;
 
     function writeJson(string calldata, string calldata, string calldata) external;
+
+    // Checks if a key exists in the given json string
+    function keyExists(string calldata, string calldata) external returns (bool);
 
     // Pauses gas metering (gas usage will not be counted)
     function pauseGasMetering() external;

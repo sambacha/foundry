@@ -286,7 +286,8 @@ pub enum Subcommands {
     /// Create an access list for a transaction.
     #[clap(visible_aliases = &["ac", "acl"])]
     AccessList(AccessListArgs),
-    /// Create an access list for a transaction.
+    /// Get logs by signature or topic.
+    #[clap(visible_alias = "l")]
     Logs(LogsArgs),
     /// Get information about a block.
     #[clap(visible_alias = "bl")]
@@ -384,8 +385,13 @@ pub enum Subcommands {
         /// The transaction hash.
         tx_hash: String,
 
-        /// If specified, only get the given field of the transaction.
+        /// If specified, only get the given field of the transaction. If "raw", the RLP encoded
+        /// transaction will be printed.
         field: Option<String>,
+
+        /// Print the raw RLP encoded transaction.
+        #[clap(long, conflicts_with = "field")]
+        raw: bool,
 
         /// Print as JSON.
         #[clap(long, short, help_heading = "Display options")]
@@ -460,7 +466,7 @@ pub enum Subcommands {
     /// Defaults to decoding output data. To decode input data pass --input.
     ///
     /// When passing `--input`, function selector must NOT be prefixed in `calldata` string
-    #[clap(name = "abi-decode", visible_alias = "ad")]
+    #[clap(name = "abi-decode", visible_aliases = &["ad", "--abi-decode"])]
     AbiDecode {
         /// The function signature in the format `<name>(<in-types>)(<out-types>)`.
         sig: String,
@@ -531,23 +537,21 @@ pub enum Subcommands {
         rpc: RpcOpts,
     },
 
-    /// Get the function signatures for the given selector from https://sig.eth.samczsun.com.
+    /// Get the function signatures for the given selector from https://openchain.xyz.
     #[clap(name = "4byte", visible_aliases = &["4", "4b"])]
     FourByte {
         /// The function selector.
         selector: Option<String>,
     },
 
-    /// Decode ABI-encoded calldata using https://sig.eth.samczsun.com.
+    /// Decode ABI-encoded calldata using https://openchain.xyz.
     #[clap(name = "4byte-decode", visible_aliases = &["4d", "4bd"])]
     FourByteDecode {
         /// The ABI-encoded calldata.
         calldata: Option<String>,
     },
 
-    /// Get the event signature for a given topic 0 from https://sig.
-    ///
-    /// eth.samczsun.com.
+    /// Get the event signature for a given topic 0 from https://openchain.xyz.
     #[clap(name = "4byte-event", visible_aliases = &["4e", "4be"])]
     FourByteEvent {
         /// Topic 0
@@ -555,7 +559,7 @@ pub enum Subcommands {
         topic: Option<String>,
     },
 
-    /// Upload the given signatures to https://sig.eth.samczsun.com.
+    /// Upload the given signatures to https://openchain.xyz.
     ///
     /// Example inputs:
     /// - "transfer(address,uint256)"
@@ -573,13 +577,13 @@ pub enum Subcommands {
 
     /// Pretty print calldata.
     ///
-    /// Tries to decode the calldata using https://sig.eth.samczsun.com unless --offline is passed.
+    /// Tries to decode the calldata using https://openchain.xyz unless --offline is passed.
     #[clap(visible_alias = "pc")]
     PrettyCalldata {
         /// The calldata.
         calldata: Option<String>,
 
-        /// Skip the https://sig.eth.samczsun.com lookup.
+        /// Skip the https://openchain.xyz lookup.
         #[clap(long, short)]
         offline: bool,
     },
@@ -703,7 +707,7 @@ pub enum Subcommands {
     },
 
     /// Perform an ENS reverse lookup.
-    #[clap(visible_alias = "l")]
+    #[clap(visible_alias = "la")]
     LookupAddress {
         /// The account to perform the lookup for.
         who: Option<Address>,

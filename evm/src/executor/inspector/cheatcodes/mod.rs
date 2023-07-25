@@ -1,11 +1,10 @@
 use self::{
     env::Broadcast,
     expect::{handle_expect_emit, handle_expect_revert, ExpectedCallType},
-    util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions},
+    util::{check_if_fixed_gas_limit, process_create, BroadcastableTransactions, MAGIC_SKIP_BYTES},
 };
 use crate::{
     abi::HEVMCalls,
-    error::SolError,
     executor::{
         backend::DatabaseExt, inspector::cheatcodes::env::RecordedLogs, CHEATCODE_ADDRESS,
         HARDHAT_CONSOLE_ADDRESS,
@@ -21,6 +20,7 @@ use ethers::{
     },
 };
 use foundry_common::evm::Breakpoints;
+use foundry_utils::error::SolError;
 use itertools::Itertools;
 use revm::{
     interpreter::{opcode, CallInputs, CreateInputs, Gas, InstructionResult, Interpreter},
@@ -114,6 +114,9 @@ pub struct Cheatcodes {
 
     /// Rememebered private keys
     pub script_wallets: Vec<LocalWallet>,
+
+    /// Whether the skip cheatcode was activated
+    pub skip: bool,
 
     /// Prank information
     pub prank: Option<Prank>,
@@ -744,6 +747,14 @@ where
             return (status, remaining_gas, retdata)
         }
 
+        if data.journaled_state.depth() == 0 && self.skip {
+            return (
+                InstructionResult::Revert,
+                remaining_gas,
+                Error::custom_bytes(MAGIC_SKIP_BYTES).encode_error().0,
+            )
+        }
+
         // Clean up pranks
         if let Some(prank) = &self.prank {
             if data.journaled_state.depth() == prank.depth {
@@ -844,14 +855,15 @@ where
                                 .into_iter()
                                 .flatten()
                                 .join(" and ");
+                                let failure_message = match status {
+                                    InstructionResult::Continue | InstructionResult::Stop | InstructionResult::Return | InstructionResult::SelfDestruct =>
+                                    format!("Expected call to {address:?} with {expected_values} to be called {count} time(s), but was called {actual_count} time(s)"),
+                                    _ => format!("Expected call to {address:?} with {expected_values} to be called {count} time(s), but the call reverted instead. Ensure you're testing the happy path when using the expectCall cheatcode"),
+                                };
                                 return (
                                     InstructionResult::Revert,
                                     remaining_gas,
-                                    format!(
-                                        "Expected call to {address:?} with {expected_values} to be called {count} time(s), but was called {actual_count} time(s)"
-                                    )
-                                    .encode()
-                                    .into(),
+                                    failure_message.encode().into(),
                                 )
                             }
                         }
@@ -870,14 +882,15 @@ where
                                 .into_iter()
                                 .flatten()
                                 .join(" and ");
+                                let failure_message = match status {
+                                    InstructionResult::Continue | InstructionResult::Stop | InstructionResult::Return | InstructionResult::SelfDestruct =>
+                                    format!("Expected call to {address:?} with {expected_values} to be called {count} time(s), but was called {actual_count} time(s)"),
+                                    _ => format!("Expected call to {address:?} with {expected_values} to be called {count} time(s), but the call reverted instead. Ensure you're testing the happy path when using the expectCall cheatcode"),
+                                };
                                 return (
                                     InstructionResult::Revert,
                                     remaining_gas,
-                                    format!(
-                                        "Expected call to {address:?} with {expected_values} to be called at least {count} time(s), but was called {actual_count} time(s)"
-                                    )
-                                    .encode()
-                                    .into(),
+                                    failure_message.encode().into(),
                                 )
                             }
                         }
@@ -890,13 +903,15 @@ where
             self.expected_emits.retain(|expected| !expected.found);
             // If not empty, we got mismatched emits
             if !self.expected_emits.is_empty() {
+                let failure_message = match status {
+                    InstructionResult::Continue | InstructionResult::Stop | InstructionResult::Return | InstructionResult::SelfDestruct =>
+                    "Expected an emit, but no logs were emitted afterward. You might have mismatched events or not enough events were emitted.",
+                    _ => "Expected an emit, but the call reverted instead. Ensure you're testing the happy path when using the `expectEmit` cheatcode.",
+                };
                 return (
                     InstructionResult::Revert,
                     remaining_gas,
-                    "Expected an emit, but no logs were emitted afterward. You might have mismatched events or not enough events were emitted."
-                        .to_string()
-                        .encode()
-                        .into(),
+                    failure_message.to_string().encode().into(),
                 )
             }
         }
