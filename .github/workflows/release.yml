@@ -11,6 +11,8 @@ on:
 env:
     CARGO_TERM_COLOR: always
     IS_NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    SCCACHE_GHA_ENABLED: "true"
+    RUSTC_WRAPPER: "sccache"
 
 jobs:
     prepare:
@@ -36,7 +38,9 @@ jobs:
                     echo "tag_name=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
                     echo "release_name=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
                   fi
-
+            - name: enable sccache
+              uses: 0o-de-lally/sccache-action@local
+              
             # Creates a `nightly-SHA` tag for this specific nightly
             # This tag is used for this specific nightly version's release
             # which allows users to roll back. It is also used to build
