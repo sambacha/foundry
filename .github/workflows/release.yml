@@ -88,11 +88,11 @@ jobs:
                       svm_target_platform: linux-aarch64
                       platform: linux
                       arch: arm64
-#                    - runner: macos-latest-large
-#                      target: x86_64-apple-darwin
-#                     svm_target_platform: macosx-amd64
-#                      platform: darwin
-#                      arch: amd64
+                    - runner: macos-latest-large
+                      target: x86_64-apple-darwin
+                      svm_target_platform: macosx-amd64
+                      platform: darwin
+                      arch: amd64
                     - runner: macos-latest-large
                       target: aarch64-apple-darwin
                       svm_target_platform: macosx-aarch64
@@ -232,7 +232,7 @@ jobs:
                       ${{ steps.man.outputs.foundry_man }}
 
     publish-release:
-            needs: [release]
+            needs: [prepare, release]
             runs-on: ubuntu-latest
             steps:
               - name: Download all workflow run artifacts
@@ -244,6 +244,7 @@ jobs:
                 uses: ncipollo/release-action@v1
                 with:
                   artifacts: ${{ steps.artifacts.outputs.file_name }}
+                  prerelease: true
 
     cleanup:
         name: Release cleanup
