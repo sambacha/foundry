@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -eo pipefail
+# shellcheck shell=bash
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -9,6 +10,14 @@ FOUNDRY_MAN_DIR="$FOUNDRY_DIR/share/man/man1"
 BINS=(forge cast anvil chisel)
 
 export RUSTFLAGS="${RUSTFLAGS:--C target-cpu=native}"
+
+check_bins_in_use() {
+  for bin in "${BINS[@]}"; do
+    if pgrep -x "$bin" >/dev/null; then
+      err "Error: '$bin' is currently running. Please stop the process and try again."
+    fi
+  done
+}
 
 main() {
   need_cmd git
@@ -63,6 +72,8 @@ main() {
     ensure cargo build --bins --release # need 4 speed
 
     for bin in "${BINS[@]}"; do
+      # Check to make sure we are not running a foundry binary
+      check_bins_in_use
       # Remove prior installations if they exist
       rm -f "$FOUNDRY_BIN_DIR/$bin"
       # Symlink from local repo binaries to bin dir
@@ -129,6 +140,7 @@ main() {
     MAN_TARBALL_URL="${RELEASE_URL}foundry_man_${FOUNDRYUP_VERSION}.tar.gz"
 
     # Download and extract the binaries archive
+    check_bins_in_use
     say "downloading latest forge, cast, anvil, and chisel"
     if [ "$PLATFORM" = "win32" ]; then
       tmp="$(mktemp -d 2>/dev/null || echo ".")/foundry.zip"
@@ -264,7 +276,7 @@ need_cmd() {
 }
 
 check_cmd() {
-  command -v "$1" &>/dev/null
+    command -v "$1" > /dev/null 2>&1
 }
 
 # Run a command that should never fail. If the command fails execution
@@ -278,9 +290,9 @@ download() {
   if [ "$2" != "" ]; then
     # output into $2
     if check_cmd curl; then
-      curl -#o "$2" -L "$1"
+      curl --proto '=https' --tlsv1.2 --silent --show-error --fail --location "$1" --output "$2"
     else
-      wget --show-progress -qO "$2" "$1"
+      wget --https-only --secure-protocol=TLSv1_2 --show-progress -qO "$2" "$1"
     fi
   else
     # output to stdout
@@ -291,6 +303,7 @@ download() {
     fi
   fi
 }
+
 
 # Banner Function for Foundry
 banner() {
@@ -316,4 +329,4 @@ Contribute : https://github.com/orgs/foundry-rs/projects/2/
 }
 
 
-main "$@"
+main "$@" || exit 1
