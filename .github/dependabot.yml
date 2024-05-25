@@ -1,0 +1,64 @@
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    # Files stored in repository root
+    directory: "/cast"
+    schedule:
+      interval: "daily"
+    commit-message:
+      prefix: "chore(cargo)"
+      prefix-development: "chore(cargo-dev)"
+      include: "scope"
+    open-pull-requests-limit: 3
+    versioning-strategy: lockfile-only
+    labels:
+      - "[automation]"
+      - "dependencies"
+
+  - package-ecosystem: "cargo"
+    # Files stored in `app` directory
+    directory: "/forge"
+    schedule:
+      interval: "daily"
+    commit-message:
+      prefix: "auto(cast)"
+      include: "scope"
+    open-pull-requests-limit: 3
+    versioning-strategy: lockfile-only
+    labels:
+      - "[automation]"
+      - "dependencies"
+
+  - package-ecosystem: "github-actions"
+    # Workflow files stored in the
+    # default location of `.github/workflows`
+    directory: ".github/workflow"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(workflow)"
+      include: "scope"
+    open-pull-requests-limit: 1
+    versioning-strategy: lockfile-only
+    labels:
+      - "[automation]"
+      - "dependencies"
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    allow:
+      # Allow only direct updates for
+      # ethers-rs and any packages starting "ethers"
+      - dependency-name: "ethers-*"
+        dependency-type: "direct"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+    open-pull-requests-limit: 5
+    versioning-strategy: lockfile-only
+    labels:
+      - "[automation]"
+      - "dependencies"
